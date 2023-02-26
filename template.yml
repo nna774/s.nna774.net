@@ -1,0 +1,49 @@
+AWSTemplateFormatVersion: 2010-09-09
+Transform: AWS::Serverless-2016-10-31
+Resources:
+  ApiGateway:
+    Name: s-nna774-net
+    Type: AWS::Serverless::Api
+    Properties:
+      StageName: Prod
+      Domain:
+        CertificateArn: arn:aws:acm:ap-northeast-1:486414336274:certificate/0c2a64fd-0793-4975-b418-c1596e14c5c0
+        DomainName: s.nna774.net
+  Function:
+    Type: AWS::Serverless::Function
+    Properties:
+      Handler: s.nna774.net
+      Runtime: go1.x
+      FunctionName: s-nna774-net
+      Timeout: 30
+      Environment:
+        Variables:
+          DYNAMODB_ENDPOINT: ""
+          DYNAMODB_TABLE_NAME: !Ref GotoTable
+      Events:
+        Root:
+          Type: Api
+          Properties:
+            RestApiId: !Ref ApiGateway
+            Path: /
+            Method: any
+        Proxy:
+          Type: Api
+          Properties:
+            RestApiId: !Ref ApiGateway
+            Path: /{proxy+}
+            Method: any
+  GotoTable:
+    Type: AWS::Serverless::SimpleTable
+    Properties:
+      TableName: s-nna774-net
+      PrimaryKey:
+        Name: id
+        Type: String
+      ProvisionedThroughput:
+        ReadCapacityUnits: 1
+        WriteCapacityUnits: 1
+Outputs:
+  ApiURL:
+    Description: "API endpoint URL for Prod environment"
+    Value: !Sub "https://${ApiGateway}.execute-api.${AWS::Region}.amazonaws.com/Prod"
