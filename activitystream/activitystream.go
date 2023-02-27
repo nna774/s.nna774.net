@@ -9,14 +9,17 @@ import (
 const ActivityStreamsContentType = `application/ld+json; profile="https://www.w3.org/ns/activitystreams"`
 
 type Object struct {
-	Context interface{} `json:"@context,omitempty"`
-	ID      string      `json:"id,omitempty"`
-	Type    string      `json:"type,omitempty"`
-	URL     string      `json:"url"`
-	Name    string      `json:"name,omitempty"`
-	Icon    Icon        `json:"icon,omitempty"`
-	To      []string    `json:"to,omitempty"`
-	Cc      []string    `json:"cc,omitempty"`
+	Context      interface{} `json:"@context,omitempty"`
+	ID           string      `json:"id,omitempty"`
+	Type         string      `json:"type,omitempty"`
+	URL          string      `json:"url,omitempty"`
+	Name         string      `json:"name,omitempty"`
+	Icon         Icon        `json:"icon,omitempty"`
+	To           []string    `json:"to,omitempty"`
+	Cc           []string    `json:"cc,omitempty"`
+	Content      string      `json:"content,omitempty"`
+	Published    string      `json:"published,omitempty"`
+	AttributedTo string      `json:"attributedTo,omitempty"`
 }
 
 type Icon struct {
@@ -115,12 +118,21 @@ func NewAccept(act Activity, actorID string, acceptID string) Accept {
 	return Accept{
 		Activity: Activity{
 			Object: Object{
-				Context: []string{"https://www.w3.org/ns/activitystreams"},
+				Context: "https://www.w3.org/ns/activitystreams",
 				ID:      acceptID,
 				Type:    "Accept",
 			},
 			Actor: actorID,
 		},
 		Item: act,
+	}
+}
+
+func NewNote(name, content string) Object {
+	return Object{
+		Context: "	https://www.w3.org/ns/activitystreams",
+		Type:    "Note",
+		Name:    name,
+		Content: content,
 	}
 }

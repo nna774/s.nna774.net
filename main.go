@@ -88,17 +88,6 @@ func userHandler(w http.ResponseWriter, r *http.Request) httperror.HttpError {
 	return nil
 }
 
-type Note struct {
-	ID           string   `json:"id"`
-	Type         string   `json:"type"`
-	URL          string   `json:"url"`
-	Published    string   `json:"published"`
-	Content      string   `json:"content"`
-	AttributedTo string   `json:"attributedTo"`
-	To           []string `json:"to"`
-	Cc           []string `json:"cc"`
-}
-
 func table() (*dynamo.Table, error) {
 	cfg := aws.NewConfig()
 	s, err := session.NewSession()
