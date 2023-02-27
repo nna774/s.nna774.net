@@ -152,7 +152,7 @@ func sendAccept(act activitystream.Activity) error {
 	if err != nil {
 		return err
 	}
-	ur, err := act.FetchActorInfo()
+	ur, err := activitystream.FetchActorInfo(act.Actor)
 	if err != nil {
 		return err
 	}

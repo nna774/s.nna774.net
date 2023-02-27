@@ -33,8 +33,8 @@ type Activity struct {
 	Actor string `json:"actor"`
 }
 
-func (a *Activity) FetchActorInfo() (*UserResource, error) {
-	req, err := http.NewRequest(http.MethodGet, a.Actor, nil)
+func FetchActorInfo(actor string) (*UserResource, error) {
+	req, err := http.NewRequest(http.MethodGet, actor, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -45,7 +45,7 @@ func (a *Activity) FetchActorInfo() (*UserResource, error) {
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("fetchActorInfo failed. actor %v not found", a.Actor)
+		return nil, fmt.Errorf("fetchActorInfo failed. actor %v not found", actor)
 	}
 	var ur UserResource
 	err = json.NewDecoder(resp.Body).Decode(&ur)
