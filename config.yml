@@ -1,0 +1,10 @@
+username: 'nana@nna774.net'
+alias_usernames:
+  # https://docs.joinmastodon.org/spec/webfinger/#mastodons-requirements-for-webfinger
+  - nana@s.nna774.net
+name: 久我山菜々
+origin: https://s.nna774.net
+icon_uri: https://nna774.net/img/1012_filtered.jpg
+public_key_name: main-key
+public_key_file: pub.key
+private_key_file: private.key

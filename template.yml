@@ -19,7 +19,7 @@ Resources:
       Environment:
         Variables:
           DYNAMODB_ENDPOINT: ""
-          DYNAMODB_TABLE_NAME: !Ref GotoTable
+          DYNAMODB_TABLE_NAME: !Ref Table
       Events:
         Root:
           Type: Api
@@ -33,13 +33,20 @@ Resources:
             RestApiId: !Ref ApiGateway
             Path: /{proxy+}
             Method: any
-  GotoTable:
-    Type: AWS::Serverless::SimpleTable
+  Table:
+    Type: AWS::DynamoDB::Table
     Properties:
       TableName: s-nna774-net
-      PrimaryKey:
-        Name: id
-        Type: String
+      AttributeDefinitions:
+        - AttributeName: id
+          AttributeType: S
+        - AttributeName: name
+          AttributeType: S
+      KeySchema:
+        - AttributeName: id
+          KeyType: HASH
+        - AttributeName: name
+          KeyType: RANGE
       ProvisionedThroughput:
         ReadCapacityUnits: 1
         WriteCapacityUnits: 1
