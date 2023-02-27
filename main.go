@@ -2,8 +2,10 @@ package main
 
 import (
 	"bytes"
+	"crypto/rsa"
 	"encoding/json"
 	"fmt"
+	"sync"
 
 	"log"
 	"net/http"
@@ -30,6 +32,7 @@ const configFile = "config.yml"
 var TableName = os.Getenv("DYNAMODB_TABLE_NAME")
 
 var Config *config.Config
+var signer *mySigner
 
 func init() {
 	cnf, err := config.LoadConfig(configFile)
@@ -37,6 +40,49 @@ func init() {
 		panic(err)
 	}
 	Config = cnf
+
+	signer, err = newSigner(Config.PrivateKey(), Config.PublicKey(), Config.ID()+"#main-key")
+	if err != nil {
+		panic(err)
+	}
+}
+
+type mySigner struct {
+	signer    httpsig.Signer
+	mu        *sync.Mutex
+	privKey   *rsa.PrivateKey
+	publicKey string
+	keyID     string
+}
+
+func newSigner(privKey *rsa.PrivateKey, publicKey string, keyID string) (*mySigner, error) {
+	signer, _, err := httpsig.NewSigner(nil, httpsig.DigestSha256, []string{httpsig.RequestTarget, "Date", "Digest"}, httpsig.Signature, int64(time.Minute))
+	if err != nil {
+		return nil, err
+	}
+	return &mySigner{
+		signer:    signer,
+		mu:        &sync.Mutex{},
+		privKey:   privKey,
+		publicKey: publicKey,
+		keyID:     keyID,
+	}, nil
+}
+
+func (s *mySigner) requestWithSign(method string, url string, body []byte) (*http.Response, error) {
+	req, err := http.NewRequest(method, url, bytes.NewBuffer(body))
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Add("content-type", activitystream.ActivityStreamsContentType)
+	req.Header.Add("date", CurrentTime())
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	err = s.signer.SignRequest(s.privKey, s.keyID, req, body)
+	if err != nil {
+		return nil, err
+	}
+	return http.DefaultClient.Do(req)
 }
 
 func respondAsJSON(w http.ResponseWriter, status int, body interface{}) {
@@ -110,7 +156,7 @@ func sendAccept(act activitystream.Activity) error {
 	if err != nil {
 		return err
 	}
-	requestWithSign(http.MethodPost, ur.Inbox, buf.Bytes())
+	signer.requestWithSign(http.MethodPost, ur.Inbox, buf.Bytes())
 	return nil
 }
 
@@ -166,24 +212,6 @@ func indexHandler(w http.ResponseWriter, r *http.Request) httperror.HttpError {
 
 func CurrentTime() string {
 	return strings.ReplaceAll(time.Now().UTC().Format(time.RFC1123), "UTC", "GMT")
-}
-
-func requestWithSign(method, url string, body []byte) (*http.Response, error) {
-	req, err := http.NewRequest(method, url, bytes.NewBuffer(body))
-	if err != nil {
-		return nil, err
-	}
-	req.Header.Add("content-type", activitystream.ActivityStreamsContentType)
-	req.Header.Add("date", CurrentTime())
-	signer, _, err := httpsig.NewSigner(nil, httpsig.DigestSha256, []string{httpsig.RequestTarget, "Date", "Digest"}, httpsig.Signature, int64(time.Minute))
-	if err != nil {
-		return nil, err
-	}
-	err = signer.SignRequest(Config.PrivateKey(), Config.ID()+"#"+Config.PublicKeyName, req, body)
-	if err != nil {
-		return nil, err
-	}
-	return http.DefaultClient.Do(req)
 }
 
 func main() {
