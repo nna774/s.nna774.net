@@ -115,7 +115,7 @@ func NewAccept(act Activity, actorID string, acceptID string) Accept {
 	return Accept{
 		Activity: Activity{
 			Object: Object{
-				Context: []interface{}{"https://www.w3.org/ns/activitystreams"},
+				Context: []string{"https://www.w3.org/ns/activitystreams"},
 				ID:      acceptID,
 				Type:    "Accept",
 			},

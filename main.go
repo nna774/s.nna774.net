@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/julienschmidt/httprouter"
 	"github.com/nna774/s.nna774.net/activitystream"
 	"github.com/nna774/s.nna774.net/config"
 	"github.com/nna774/s.nna774.net/httperror"
@@ -197,15 +198,17 @@ func requestWithSign(method, url string, body []byte) (*http.Response, error) {
 }
 
 func main() {
-	http.Handle("/", httperror.HandleFuncWithError(indexHandler))
-	http.Handle("/u/", httperror.HandleFuncWithError(userHandler))
-	http.Handle("/inbox", httperror.HandleFuncWithError(inboxHandler))
-	http.Handle("/.well-known/webfinger", httperror.HandleFuncWithError(webfingerHandler))
-	http.Handle("/.well-known/host-meta", httperror.HandleFuncWithError(hostMetaHandler))
+	r := httprouter.New()
+	r.Handler(http.MethodGet, "/", httperror.HandleFuncWithError(indexHandler))
+	r.Handler(http.MethodGet, "/u/:user", httperror.HandleFuncWithError(userHandler))
+	r.Handler(http.MethodPost, "/u/:user/inbox", httperror.HandleFuncWithError(inboxHandler))
+
+	r.Handler(http.MethodGet, "/.well-known/webfinger", httperror.HandleFuncWithError(webfingerHandler))
+	r.Handler(http.MethodGet, "/.well-known/host-meta", httperror.HandleFuncWithError(hostMetaHandler))
 
 	if os.Getenv("ENV") == "development" {
-		http.ListenAndServe(":8080", nil)
+		http.ListenAndServe(":8080", r)
 	} else {
-		algnhsa.ListenAndServe(nil, &algnhsa.Options{RequestType: algnhsa.RequestTypeAPIGateway})
+		algnhsa.ListenAndServe(r, &algnhsa.Options{RequestType: algnhsa.RequestTypeAPIGateway})
 	}
 }
