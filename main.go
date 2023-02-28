@@ -190,7 +190,7 @@ func main() {
 	r.Handler(http.MethodGet, "/.well-known/host-meta", httperror.HandleFuncWithError(hostMetaHandler))
 
 	if os.Getenv("ENV") == "development" {
-		http.ListenAndServe(":8080", r)
+		http.ListenAndServe("localhost:8080", r)
 	} else {
 		algnhsa.ListenAndServe(r, &algnhsa.Options{RequestType: algnhsa.RequestTypeAPIGateway})
 	}
