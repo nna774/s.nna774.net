@@ -160,7 +160,7 @@ func sendAccept(act activitystream.Activity) error {
 	return nil
 }
 
-func followHandler(w http.ResponseWriter, r *http.Request, in activitystream.Inbox) httperror.HttpError {
+func followHandler(w http.ResponseWriter, r *http.Request, in activitystream.ReceivedInbox) httperror.HttpError {
 	// TODO: allow only
 	object, err := in.Item.MarshalJSON()
 	if err != nil {
@@ -178,7 +178,7 @@ func followHandler(w http.ResponseWriter, r *http.Request, in activitystream.Inb
 func inboxHandler(w http.ResponseWriter, r *http.Request) httperror.HttpError {
 	// get の時の処理
 
-	var in activitystream.Inbox
+	var in activitystream.ReceivedInbox
 	err := json.NewDecoder(r.Body).Decode(&in)
 	if err != nil {
 		return httperror.StatusUnprocessableEntity("decode failed", err)

@@ -104,7 +104,7 @@ func NewUserResource(ID string, name string, IconURI string, iconMediaType strin
 	}
 }
 
-type Inbox struct {
+type ReceivedInbox struct {
 	Activity
 
 	Item json.RawMessage `json:"object"`
