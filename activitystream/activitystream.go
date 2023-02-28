@@ -135,11 +135,44 @@ func NewAccept(act Activity, actorID string, acceptID string) Accept {
 	}
 }
 
-func NewNote(name, content string) Object {
+func NewNote(noteID string, published string, name string, content string, attributedTo string, to []string, cc []string, tag []Object) Object {
 	return Object{
-		Context: "	https://www.w3.org/ns/activitystreams",
-		Type:    "Note",
-		Name:    name,
-		Content: content,
+		Context:      "https://www.w3.org/ns/activitystreams",
+		ID:           noteID,
+		Type:         "Note",
+		URL:          noteID,
+		Published:    published,
+		Name:         name,
+		Content:      content,
+		AttributedTo: attributedTo,
+		To:           to,
+		Cc:           cc,
+		Tag:          tag,
 	}
+}
+
+func NewCreate(createID string, actor string, to []string, cc []string, object Object) Activity {
+	return Activity{
+		Object: Object{
+			Context: "https://www.w3.org/ns/activitystreams",
+			ID:      createID,
+			Type:    "Create",
+			To:      to,
+			Cc:      cc,
+		},
+		Actor: actor,
+		Item:  object,
+	}
+}
+
+func NewTag(tagType string, name string, href string) Object {
+	return Object{
+		Type: tagType,
+		Name: name,
+		Href: href,
+	}
+}
+
+func NewMention(toID string) Object {
+	return NewTag("Mention", "@kugayama@pawoo.net", toID) // TODO:
 }

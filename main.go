@@ -145,19 +145,34 @@ func table() (*dynamo.Table, error) {
 	return &t, nil
 }
 
+func sendToInbox[T activitystream.Inbox](to string, object T) error {
+	buf := &bytes.Buffer{}
+	err := json.NewEncoder(buf).Encode(object)
+	if err != nil {
+		return err
+	}
+	ur, err := activitystream.FetchActorInfo(to)
+	if err != nil {
+		return err
+	}
+	resp, err := signer.requestWithSign(http.MethodPost, ur.Inbox, buf.Bytes())
+	log.Printf("send: %+v, body: %s, err: %+v", resp, resp.Body, err)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	return nil
+}
+
 func sendAccept(act activitystream.Activity) error {
 	accept := activitystream.NewAccept(act, Config.ID(), Config.Origin+"/accept/"+fmt.Sprintf("%v", time.Now().Unix()))
-	buf := &bytes.Buffer{}
-	err := json.NewEncoder(buf).Encode(accept)
-	if err != nil {
-		return err
-	}
-	ur, err := activitystream.FetchActorInfo(act.Actor)
-	if err != nil {
-		return err
-	}
-	signer.requestWithSign(http.MethodPost, ur.Inbox, buf.Bytes())
-	return nil
+	return sendToInbox(accept.Actor, accept)
+}
+
+func sendNote(to string, note activitystream.Object) error {
+	createID := note.ID + "/activity"
+	create := activitystream.NewCreate(createID, note.AttributedTo, note.To, note.Cc, note)
+	return sendToInbox(to, create)
 }
 
 func followHandler(w http.ResponseWriter, r *http.Request, in activitystream.ReceivedInbox) httperror.HttpError {
