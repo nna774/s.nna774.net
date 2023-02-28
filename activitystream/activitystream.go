@@ -20,6 +20,8 @@ type Object struct {
 	Content      string      `json:"content,omitempty"`
 	Published    string      `json:"published,omitempty"`
 	AttributedTo string      `json:"attributedTo,omitempty"`
+	Tag          []Object    `json:"tag,omitempty"`  // TODO: this may be object, not array
+	Href         string      `json:"href,omitempty"` // activitypub-stream don't have this, but mastodon's tag has this
 }
 
 type Icon struct {
@@ -30,7 +32,8 @@ type Icon struct {
 
 type Activity struct {
 	Object
-	Actor string `json:"actor"`
+	Actor string `json:"actor,omitempty"` // TODO: 実はmaybe object
+	Item  Object `json:"object,omitempty"`
 }
 
 func FetchActorInfo(actor string) (*UserResource, error) {
@@ -112,6 +115,10 @@ type ReceivedInbox struct {
 type Accept struct {
 	Activity
 	Item Activity `json:"object"`
+}
+
+type Inbox interface {
+	Accept | Activity
 }
 
 func NewAccept(act Activity, actorID string, acceptID string) Accept {
