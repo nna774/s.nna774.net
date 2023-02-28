@@ -14,7 +14,7 @@ type Object struct {
 	Type         string      `json:"type,omitempty"`
 	URL          string      `json:"url,omitempty"`
 	Name         string      `json:"name,omitempty"`
-	Icon         Icon        `json:"icon,omitempty"`
+	Icon         *Icon       `json:"icon,omitempty"`
 	To           []string    `json:"to,omitempty"`
 	Cc           []string    `json:"cc,omitempty"`
 	Content      string      `json:"content,omitempty"`
@@ -25,9 +25,9 @@ type Object struct {
 }
 
 type Icon struct {
-	Type      string `json:"type"`
-	MediaType string `json:"mediaType"`
-	URL       string `json:"url"`
+	Type      string `json:"type,omitempty"`
+	MediaType string `json:"mediaType,omitempty"`
+	URL       string `json:"url,omitempty"`
 }
 
 type Activity struct {
@@ -86,7 +86,7 @@ func NewUserResource(ID string, name string, IconURI string, iconMediaType strin
 			Type: "Person",
 			URL:  ID,
 			Name: name,
-			Icon: Icon{
+			Icon: &Icon{
 				Type:      "Image",
 				MediaType: iconMediaType,
 				URL:       IconURI,
