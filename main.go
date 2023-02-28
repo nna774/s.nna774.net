@@ -14,6 +14,7 @@ import (
 	"github.com/julienschmidt/httprouter"
 	"github.com/nna774/s.nna774.net/activitystream"
 	"github.com/nna774/s.nna774.net/config"
+	"github.com/nna774/s.nna774.net/datastore"
 	"github.com/nna774/s.nna774.net/httperror"
 	"github.com/nna774/s.nna774.net/httpsigclient"
 	"github.com/nna774/s.nna774.net/webfinger"
@@ -24,10 +25,12 @@ import (
 
 const configFile = "config.yml"
 
-var TableName = os.Getenv("DYNAMODB_TABLE_NAME")
+var region = "ap-northeast-1" //
+var tableName = os.Getenv("DYNAMODB_TABLE_NAME")
 
 var Config *config.Config
 var signer *httpsigclient.Signer
+var client datastore.Client
 
 func init() {
 	cnf, err := config.LoadConfig(configFile)
@@ -37,6 +40,11 @@ func init() {
 	Config = cnf
 
 	signer, err = httpsigclient.NewSigner(Config.PrivateKey(), Config.PublicKey(), Config.ID()+"#main-key")
+	if err != nil {
+		panic(err)
+	}
+
+	client, err = datastore.NewClient(region, tableName)
 	if err != nil {
 		panic(err)
 	}
