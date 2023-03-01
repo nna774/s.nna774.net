@@ -10,12 +10,10 @@ import (
 type httpError struct {
 	err  error
 	code int
-	msg  string
 }
 
-func (e httpError) Code() int       { return e.code }
-func (e httpError) Error() string   { return e.err.Error() }
-func (e httpError) Message() string { return e.msg }
+func (e httpError) Code() int     { return e.code }
+func (e httpError) Error() string { return e.err.Error() }
 
 func newStatusError(code int, message string, cause error) HttpError {
 	if message == "" {
@@ -24,7 +22,6 @@ func newStatusError(code int, message string, cause error) HttpError {
 	err := httpError{
 		code: code,
 		err:  cause,
-		msg:  message,
 	}
 	if cause != nil {
 		err.err = fmt.Errorf("%v: %v", message, cause)
@@ -47,7 +44,6 @@ func StatusInternalServerError(message string, root error) HttpError {
 type HttpError interface {
 	error
 	Code() int
-	Message() string
 }
 
 type HandleFuncWithError func(w http.ResponseWriter, r *http.Request) HttpError
@@ -57,6 +53,6 @@ func (f HandleFuncWithError) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	err := f(w, r)
 	if err != nil {
 		log.Printf("ERROR: %+v", err)
-		http.Error(w, err.Message(), err.Code())
+		http.Error(w, err.Error(), err.Code())
 	}
 }
