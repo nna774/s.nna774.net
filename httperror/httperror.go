@@ -40,6 +40,9 @@ func StatusNotFound(message string, root error) HttpError {
 func StatusUnprocessableEntity(message string, root error) HttpError {
 	return newStatusError(http.StatusUnprocessableEntity, message, root)
 }
+func StatusInternalServerError(message string, root error) HttpError {
+	return newStatusError(http.StatusInternalServerError, message, root)
+}
 
 type HttpError interface {
 	error
