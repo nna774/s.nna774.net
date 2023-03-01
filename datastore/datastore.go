@@ -16,6 +16,11 @@ const (
 	counterValueKey = "value"
 )
 
+var (
+	// ErrNotFound is key not found err
+	ErrNotFound = dynamo.ErrNotFound
+)
+
 type counterContainer struct {
 	Kind  string `dynamo:"id"`
 	Key   string `dynamo:"name"`
@@ -33,6 +38,7 @@ type Client interface {
 	Get(kind string, key string) (string, error)
 
 	Inc(key string) (int, error)
+	// Top returns count of the key. if key does not exist, return (0, ErrNotFound)
 	Top(key string) (int, error)
 }
 
@@ -64,6 +70,7 @@ func (c *client) Inc(key string) (int, error) {
 	err = c.table.Update(partKey, counterKind).Range(sortKey, key).SetExpr("'"+counterValueKey+"' = '"+counterValueKey+"' + ?", 1).Value(&buf)
 	return buf.Value, err
 }
+
 func (c *client) Top(key string) (int, error) {
 	buf := counterContainer{}
 	err := c.table.Get(partKey, counterKind).Range(sortKey, dynamo.Equal, key).One(&buf)
