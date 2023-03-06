@@ -7,6 +7,7 @@ import (
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/aws/session"
 	"github.com/guregu/dynamo"
+	"github.com/nna774/s.nna774.net/activitystream"
 )
 
 var (
@@ -25,8 +26,8 @@ const (
 
 type Client interface {
 	Put(name string, id int, object interface{}) error
-	Get(name string, id int) (string, error)
-	Take(name string, base int, cnt int, order Order) ([]string, error)
+	GetObject(name string, id int) (activitystream.Object, error)
+	TakeObject(name string, base int, cnt int, order Order) ([]activitystream.Object, error)
 
 	Inc(key string) (int, error)
 	// Top returns count of the key. if key does not exist, return (0, ErrNotFound)
@@ -77,14 +78,28 @@ func (c *client) Put(name string, id int, object interface{}) error {
 	return c.table.Put(container).Run()
 }
 
-func (c *client) Get(name string, id int) (string, error) {
+func (c *client) GetObject(name string, id int) (activitystream.Object, error) {
 	buf := objectContainer{}
 	err := c.table.Get(partKey, objectType+name).Range(sortKey, dynamo.Equal, id).One(&buf)
-	return buf.Item, err
+	obj := activitystream.Object{}
+	json.Unmarshal([]byte(buf.Item), &obj)
+	return obj, err
 }
 
-func (c *client) Take(name string, base int, cnt int, order Order) ([]string, error) {
-	return []string{}, nil
+func (c *client) TakeObject(name string, base int, cnt int, order Order) ([]activitystream.Object, error) {
+	ord := dynamo.GreaterOrEqual
+	if order == Desc {
+		ord = dynamo.LessOrEqual
+	}
+	buf := []objectContainer{}
+	err := c.table.Get(partKey, objectType+name).Range(sortKey, ord, base).Limit(int64(cnt)).All(&buf)
+	res := make([]activitystream.Object, len(buf))
+	for i, v := range buf {
+		obj := activitystream.Object{}
+		json.Unmarshal([]byte(v.Item), &obj)
+		res[i] = obj
+	}
+	return res, err
 }
 
 func (c *client) Inc(key string) (int, error) {

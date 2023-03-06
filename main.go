@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"io"
 
 	"log"
 	"net/http"
@@ -50,11 +51,23 @@ func init() {
 	}
 }
 
-func respondAsJSON(w http.ResponseWriter, status int, body interface{}) {
-	w.WriteHeader(status)
-	e := json.NewEncoder(w)
+func inboxURI() string     { return Config.ID() + "/inbox" }
+func outboxURI() string    { return Config.ID() + "/outbox" }
+func followersURI() string { return Config.ID() + "/followers" }
+func followingURI() string { return Config.ID() + "/following" }
+func mainKeyURI() string   { return Config.ID() + "#main-key" }
+
+func respondAsJSON(w http.ResponseWriter, status int, body interface{}) httperror.HttpError {
+	buf := &bytes.Buffer{}
+	e := json.NewEncoder(buf)
 	e.SetIndent("", "  ")
-	e.Encode(body)
+	err := e.Encode(body)
+	if err != nil {
+		return httperror.StatusInternalServerError("json encode failed", err)
+	}
+	w.WriteHeader(status)
+	io.Copy(w, buf)
+	return nil
 }
 
 func respondText(w http.ResponseWriter, status int, msg string) {
@@ -79,15 +92,13 @@ func webfingerHandler(w http.ResponseWriter, r *http.Request) httperror.HttpErro
 		return httperror.StatusNotFound(fmt.Sprintf("resource %v not found", resource[0]), nil)
 	}
 	resp := webfinger.NewWebFingerUserResource(Config.Username, Config.ID())
-	respondAsJSON(w, http.StatusOK, resp)
-	return nil
+	return respondAsJSON(w, http.StatusOK, resp)
 }
 
 func jsonUserHander(w http.ResponseWriter, r *http.Request) httperror.HttpError {
 	resp := activitystream.NewUserResource(
-		Config.ID(), Config.Name, Config.IconURI, Config.IconMediaType(), Config.LocalPart(), Config.ID()+"/inbox", Config.ID()+"/outbox", Config.ID()+"/followers", Config.ID()+"/following", "やっぴ〜", Config.ID()+"#main-key", Config.PublicKey())
-	respondAsJSON(w, http.StatusOK, &resp)
-	return nil
+		Config.ID(), Config.Name, Config.IconURI, Config.IconMediaType(), Config.LocalPart(), inboxURI(), outboxURI(), followersURI(), followingURI(), "B95 H108 S102", mainKeyURI(), Config.PublicKey())
+	return respondAsJSON(w, http.StatusOK, &resp)
 }
 
 func userHandler(w http.ResponseWriter, r *http.Request) httperror.HttpError {
@@ -99,7 +110,7 @@ func userHandler(w http.ResponseWriter, r *http.Request) httperror.HttpError {
 	return nil
 }
 
-func sendToInbox[T activitystream.Inbox](to string, object T) error {
+func sendToInbox(to string, object *activitystream.Object) error {
 	buf := &bytes.Buffer{}
 	err := json.NewEncoder(buf).Encode(object)
 	if err != nil {
@@ -118,9 +129,9 @@ func sendToInbox[T activitystream.Inbox](to string, object T) error {
 	return nil
 }
 
-func sendAccept(act activitystream.Activity) error {
+func sendAccept(obj activitystream.Object, act activitystream.Activity) error {
 	accept := activitystream.NewAccept(act, Config.ID(), Config.Origin+"/accept/"+fmt.Sprintf("%v", time.Now().Unix()))
-	return sendToInbox(accept.Actor, accept)
+	return sendToInbox(act.Actor, accept)
 }
 
 func sendNote(to string, note activitystream.Object) error {
@@ -129,25 +140,22 @@ func sendNote(to string, note activitystream.Object) error {
 	return sendToInbox(to, create)
 }
 
-func followHandler(w http.ResponseWriter, r *http.Request, in activitystream.ReceivedInbox) httperror.HttpError {
+func followHandler(w http.ResponseWriter, r *http.Request, in activitystream.Object) httperror.HttpError {
 	// TODO: allow only
-	object, err := in.Item.MarshalJSON()
-	if err != nil {
-		return httperror.StatusUnprocessableEntity("followHandler", err)
+	act, ok := in.Activity()
+	if !ok {
+		return httperror.StatusUnprocessableEntity("conversion failed", nil)
 	}
-	obj := strings.Trim(string(object), "\"")
-	if obj != Config.ID() {
-		return httperror.StatusUnprocessableEntity(fmt.Sprintf("followHandler: unexpected object: %s", object), nil)
+	if act.Item.ID != Config.ID() {
+		return httperror.StatusUnprocessableEntity(fmt.Sprintf("followHandler: unexpected object: %v", act.Item), nil)
 	}
 	respondText(w, http.StatusCreated, "created\n")
-	go sendAccept(in.Activity) // TODO: err
+	go sendAccept(in, act) // TODO: err
 	return nil
 }
 
-func inboxHandler(w http.ResponseWriter, r *http.Request) httperror.HttpError {
-	// get の時の処理
-
-	var in activitystream.ReceivedInbox
+func postInboxHandler(w http.ResponseWriter, r *http.Request) httperror.HttpError {
+	var in activitystream.Object
 	err := json.NewDecoder(r.Body).Decode(&in)
 	if err != nil {
 		return httperror.StatusUnprocessableEntity("decode failed", err)
@@ -158,6 +166,55 @@ func inboxHandler(w http.ResponseWriter, r *http.Request) httperror.HttpError {
 	}
 	respondText(w, http.StatusCreated, "created\n")
 	return nil
+}
+
+const outboxKey = "outbox"
+
+func outboxHandler(w http.ResponseWriter, r *http.Request) httperror.HttpError {
+	itemsCnt, err := client.Top(outboxKey)
+	if err != nil && err != datastore.ErrNotFound { // ErrNotFound の時は1つもitemが無い。
+		return httperror.StatusInternalServerError("cannot fetch from datastore", err)
+	}
+	outbox := activitystream.NewOrderedCollection(outboxURI(), itemsCnt, outboxURI()+"/page", outboxURI()+"/page?since=0")
+	return respondAsJSON(w, http.StatusOK, outbox)
+}
+
+func flattenParam(r *http.Request, name string) (string, error) {
+	p := r.URL.Query()
+	value := p[name]
+	if len(value) >= 2 {
+		return "", fmt.Errorf("got multiple %v", name)
+	}
+	if len(value) == 0 {
+		return "", nil
+	}
+	return value[0], nil
+}
+
+func outboxPageHandler(w http.ResponseWriter, r *http.Request) httperror.HttpError {
+	defaultPerPage := 20
+	sinceID, err := flattenParam(r, "since_id")
+	if err != nil {
+		return httperror.StatusUnprocessableEntity("", err)
+	}
+	untilID, err := flattenParam(r, "until_id")
+	if err != nil {
+		return httperror.StatusUnprocessableEntity("", err)
+	}
+
+	page := (*activitystream.Object)(nil)
+	if sinceID == "" && untilID == "" {
+		items, err := client.TakeObject(outboxKey, datastore.Inf, defaultPerPage, datastore.Desc)
+		log.Printf("items: %+v", items)
+		if err != nil {
+			return httperror.StatusInternalServerError("failed", err)
+		}
+		next := "next"
+		prev := "prev"
+		page = activitystream.NewOrderedCollectionPage(r.URL.String(), outboxURI(), next, prev, items)
+	}
+
+	return respondAsJSON(w, http.StatusOK, page)
 }
 
 func hostMetaHandler(w http.ResponseWriter, r *http.Request) httperror.HttpError {
@@ -179,15 +236,25 @@ func indexHandler(w http.ResponseWriter, r *http.Request) httperror.HttpError {
 	return nil
 }
 
+func test(w http.ResponseWriter, r *http.Request, _ httprouter.Params) {
+	t, err := client.Top("test")
+	log.Printf("t: %v, err: %v", t, err)
+	t, err = client.Inc("test")
+	log.Printf("t: %v, err: %v", t, err)
+}
 
 func main() {
 	r := httprouter.New()
 	r.Handler(http.MethodGet, "/", httperror.HandleFuncWithError(indexHandler))
 	r.Handler(http.MethodGet, "/u/:user", httperror.HandleFuncWithError(userHandler))
-	r.Handler(http.MethodPost, "/u/:user/inbox", httperror.HandleFuncWithError(inboxHandler))
+	r.Handler(http.MethodPost, "/u/:user/inbox", httperror.HandleFuncWithError(postInboxHandler))
+	r.Handler(http.MethodGet, "/u/:user/outbox", httperror.HandleFuncWithError(outboxHandler))
+	r.Handler(http.MethodGet, "/u/:user/outbox/page", httperror.HandleFuncWithError(outboxPageHandler))
 
 	r.Handler(http.MethodGet, "/.well-known/webfinger", httperror.HandleFuncWithError(webfingerHandler))
 	r.Handler(http.MethodGet, "/.well-known/host-meta", httperror.HandleFuncWithError(hostMetaHandler))
+
+	r.GET("/test", test)
 
 	if os.Getenv("ENV") == "development" {
 		http.ListenAndServe("localhost:8080", r)
