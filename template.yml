@@ -19,7 +19,7 @@ Resources:
       Environment:
         Variables:
           DYNAMODB_ENDPOINT: ""
-       #   DYNAMODB_TABLE_NAME: !Ref Table
+          DYNAMODB_TABLE_NAME: !Ref Table
       Events:
         Root:
           Type: Api
