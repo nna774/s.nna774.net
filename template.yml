@@ -33,6 +33,7 @@ Resources:
             RestApiId: !Ref ApiGateway
             Path: /{proxy+}
             Method: any
+      Role: !GetAtt FunctionRole.Arn
   Table:
     Type: AWS::DynamoDB::Table
     Properties:
@@ -50,6 +51,36 @@ Resources:
       ProvisionedThroughput:
         ReadCapacityUnits: 1
         WriteCapacityUnits: 1
+  FunctionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Action: sts:AssumeRole
+            Principal:
+              Service:
+                - lambda.amazonaws.com
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: FunctionPolicies
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              - Effect: Allow
+                Action:
+                  - dynamodb:List*
+                Resource: "*"
+              - Effect: Allow
+                Action:
+                  - dynamodb:Get*
+                  - dynamodb:Query
+                  - dynamodb:Scan
+                  - dynamodb:Update*
+                  - dynamodb:PutItem
+                Resource: !GetAtt Table.Arn
 Outputs:
   ApiURL:
     Description: "API endpoint URL for Prod environment"
