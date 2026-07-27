@@ -7,6 +7,7 @@ require (
 	github.com/aws/aws-sdk-go-v2 v1.43.0
 	github.com/aws/aws-sdk-go-v2/config v1.32.31
 	github.com/aws/aws-sdk-go-v2/service/dynamodb v1.62.0
+	github.com/aws/aws-sdk-go-v2/service/ssm v1.73.0
 	github.com/go-fed/httpsig v1.1.0
 	github.com/guregu/dynamo/v2 v2.6.0
 	github.com/julienschmidt/httprouter v1.3.0

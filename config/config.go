@@ -1,13 +1,20 @@
 package config
 
 import (
+	"context"
 	"crypto/rsa"
 	"crypto/x509"
 	"encoding/pem"
 	"errors"
+	"fmt"
+	"mime"
 	"os"
+	"path"
 	"strings"
 
+	"github.com/aws/aws-sdk-go-v2/aws"
+	awsconfig "github.com/aws/aws-sdk-go-v2/config"
+	"github.com/aws/aws-sdk-go-v2/service/ssm"
 	"gopkg.in/yaml.v2"
 )
 
@@ -18,9 +25,20 @@ type Config struct {
 	Origin         string   `yaml:"origin"`
 	IconURI        string   `yaml:"icon_uri"`
 	PublicKeyName  string   `yaml:"public_key_name"`
-	PublicKeyFile  string   `yaml:"public_key_file"`
-	PrivateKeyFile string   `yaml:"private_key_file"`
+
+	// PrivateKeyFile は ENV=development のときだけ使う。
+	PrivateKeyFile string `yaml:"private_key_file"`
+	// PrivateKeyParameter は SSM Parameter Store のパラメータ名。
+	// ENV=development 以外ではこちらから読む。
+	PrivateKeyParameter string `yaml:"private_key_parameter"`
+
+	privateKey *rsa.PrivateKey
+	publicKey  string
 }
+
+// IsDevelopment はローカル実行かどうかを返す。秘密情報をファイルから
+// 読むか SSM から読むかの分岐に使う。
+func IsDevelopment() bool { return os.Getenv("ENV") == "development" }
 
 func (c *Config) LocalPart() string {
 	return strings.SplitN(c.Username, "@", 2)[0]
@@ -31,37 +49,107 @@ func (c *Config) ID() string {
 }
 
 func (c *Config) IconMediaType() string {
-	return "image/jpeg" // TODO: detect from tail
+	if t := mime.TypeByExtension(path.Ext(c.IconURI)); t != "" {
+		return t
+	}
+	return "application/octet-stream"
 }
 
-func (c *Config) loadKeys() error {
-	buf, err := os.ReadFile(c.PrivateKeyFile)
+func (c *Config) PrivateKey() *rsa.PrivateKey { return c.privateKey }
+func (c *Config) PublicKey() string           { return c.publicKey }
+
+func (c *Config) loadKeys(ctx context.Context, region string) error {
+	buf, err := c.readPrivateKeyPEM(ctx, region)
 	if err != nil {
 		return err
 	}
+	return c.setPrivateKey(buf)
+}
+
+func (c *Config) readPrivateKeyPEM(ctx context.Context, region string) ([]byte, error) {
+	if IsDevelopment() {
+		if c.PrivateKeyFile == "" {
+			return nil, errors.New("private_key_file is required when ENV=development")
+		}
+		return os.ReadFile(c.PrivateKeyFile)
+	}
+	if c.PrivateKeyParameter == "" {
+		return nil, errors.New("private_key_parameter is required")
+	}
+	params, err := fetchParameters(ctx, region, c.PrivateKeyParameter)
+	if err != nil {
+		return nil, err
+	}
+	return []byte(params[c.PrivateKeyParameter]), nil
+}
+
+func (c *Config) setPrivateKey(buf []byte) error {
 	block, _ := pem.Decode(buf)
 	if block == nil {
 		return errors.New("invalid private key data")
 	}
-	privateKey, err = x509.ParsePKCS1PrivateKey(block.Bytes)
+	key, err := parseRSAPrivateKey(block.Bytes)
 	if err != nil {
 		return err
 	}
-	buf, err = os.ReadFile(c.PublicKeyFile)
+	c.privateKey = key
+
+	// 公開鍵は秘密鍵から導出する。別ファイルや別パラメータで持つと、
+	// 食い違ったままの公開鍵を actor に載せてしまう余地が残り、その場合
+	// リモート側での署名検証が通らなくなる。導出しておけば構造的に
+	// 起こり得ない。
+	der, err := x509.MarshalPKIXPublicKey(&key.PublicKey)
 	if err != nil {
 		return err
 	}
-	publicKey = string(buf)
+	c.publicKey = string(pem.EncodeToMemory(&pem.Block{Type: "PUBLIC KEY", Bytes: der}))
 	return nil
 }
 
-var privateKey *rsa.PrivateKey
-var publicKey string
+// parseRSAPrivateKey は PKCS#1 と PKCS#8 の両方を受ける。既存の鍵は
+// PKCS#1 (BEGIN RSA PRIVATE KEY) だが、OpenSSL 3 の genrsa は PKCS#8
+// (BEGIN PRIVATE KEY) を出すため、鍵を作り直したときに読めなくなる。
+func parseRSAPrivateKey(der []byte) (*rsa.PrivateKey, error) {
+	if key, err := x509.ParsePKCS1PrivateKey(der); err == nil {
+		return key, nil
+	}
+	parsed, err := x509.ParsePKCS8PrivateKey(der)
+	if err != nil {
+		return nil, fmt.Errorf("private key is neither PKCS#1 nor PKCS#8: %w", err)
+	}
+	key, ok := parsed.(*rsa.PrivateKey)
+	if !ok {
+		return nil, fmt.Errorf("private key must be RSA, got %T", parsed)
+	}
+	return key, nil
+}
 
-func (c *Config) PrivateKey() *rsa.PrivateKey { return privateKey }
-func (c *Config) PublicKey() string           { return publicKey }
+// fetchParameters は SSM Parameter Store から SecureString を取得する。
+// 1回の API 呼び出しでまとめて引くため、コールドスタートで叩く KMS の
+// 回数を抑えられる。
+func fetchParameters(ctx context.Context, region string, names ...string) (map[string]string, error) {
+	cfg, err := awsconfig.LoadDefaultConfig(ctx, awsconfig.WithRegion(region))
+	if err != nil {
+		return nil, err
+	}
+	out, err := ssm.NewFromConfig(cfg).GetParameters(ctx, &ssm.GetParametersInput{
+		Names:          names,
+		WithDecryption: aws.Bool(true),
+	})
+	if err != nil {
+		return nil, fmt.Errorf("ssm GetParameters failed: %w", err)
+	}
+	if len(out.InvalidParameters) > 0 {
+		return nil, fmt.Errorf("ssm parameters not found: %v", out.InvalidParameters)
+	}
+	res := make(map[string]string, len(out.Parameters))
+	for _, p := range out.Parameters {
+		res[aws.ToString(p.Name)] = aws.ToString(p.Value)
+	}
+	return res, nil
+}
 
-func LoadConfig(configFile string) (*Config, error) {
+func LoadConfig(ctx context.Context, configFile string, region string) (*Config, error) {
 	cfg, err := os.ReadFile(configFile)
 	if err != nil {
 		return nil, err
@@ -71,6 +159,6 @@ func LoadConfig(configFile string) (*Config, error) {
 	if err != nil {
 		return nil, err
 	}
-	err = config.loadKeys()
+	err = config.loadKeys(ctx, region)
 	return config, err
 }

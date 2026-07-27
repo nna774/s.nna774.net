@@ -83,6 +83,16 @@ Resources:
                   - dynamodb:Update*
                   - dynamodb:PutItem
                 Resource: !GetAtt Table.Arn
+              # 署名用の秘密鍵は SecureString として SSM に置く。
+              # 標準階層 + AWS 管理キー (aws/ssm) なので費用は発生しない。
+              - Effect: Allow
+                Action:
+                  - ssm:GetParameters
+                Resource: !Sub arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/s.nna774.net/*
+              - Effect: Allow
+                Action:
+                  - kms:Decrypt
+                Resource: !Sub arn:aws:kms:${AWS::Region}:${AWS::AccountId}:alias/aws/ssm
 Outputs:
   ApiURL:
     Description: "API endpoint URL for Prod environment"

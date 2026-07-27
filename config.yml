@@ -6,5 +6,7 @@ name: 久我山菜々
 origin: https://s.nna774.net
 icon_uri: https://nna774.net/img/1012_filtered.jpg
 public_key_name: main-key
-public_key_file: pub.key
+# private_key_file は ENV=development のときだけ使う。公開鍵は秘密鍵から
+# 導出するので pub.key は読まない。
 private_key_file: private.key
+private_key_parameter: /s.nna774.net/private-key

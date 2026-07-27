@@ -43,7 +43,7 @@ var client datastore.Client
 func init() {
 	ctx := context.Background()
 
-	cnf, err := config.LoadConfig(configFile)
+	cnf, err := config.LoadConfig(ctx, configFile, region)
 	if err != nil {
 		panic(err)
 	}
@@ -333,7 +333,7 @@ func main() {
 	r.Handler(http.MethodGet, "/.well-known/webfinger", httperror.HandleFuncWithError(webfingerHandler))
 	r.Handler(http.MethodGet, "/.well-known/host-meta", httperror.HandleFuncWithError(hostMetaHandler))
 
-	if os.Getenv("ENV") == "development" {
+	if config.IsDevelopment() {
 		http.ListenAndServe("localhost:8080", r)
 	} else {
 		algnhsa.ListenAndServe(r, &algnhsa.Options{RequestType: algnhsa.RequestTypeAPIGatewayV1})
