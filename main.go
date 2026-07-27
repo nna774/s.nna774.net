@@ -272,13 +272,6 @@ func indexHandler(w http.ResponseWriter, r *http.Request) httperror.HttpError {
 	return nil
 }
 
-func test(w http.ResponseWriter, r *http.Request, _ httprouter.Params) {
-	t, err := client.Top("test")
-	log.Printf("t: %v, err: %v", t, err)
-	t, err = client.Inc("test")
-	log.Printf("t: %v, err: %v", t, err)
-}
-
 func sendNote(to []string, note *activitystream.Object) error {
 	type r struct {
 		Err error
@@ -319,35 +312,6 @@ func saveToOutbox(id int, create *activitystream.Object) error {
 	return err
 }
 
-func yappi(w http.ResponseWriter, r *http.Request, _ httprouter.Params) {
-	id, err := client.Inc(statusKey)
-	if err != nil {
-		panic(err)
-	}
-	statusID := myStatusURI(id)
-	followers := []string{followersURI(), "https://pawoo.net/users/kugayama/inbox"} // TODO:
-	note := activitystream.NewNote(statusID, httpsigclient.CurrentTime(), "", fmt.Sprintf("やっぴー %d <a href=\"https://pawoo.net/@kugayama\" class=\"u-url mention\">@kugayama@pawoo.net</a>", id), Config.ID(), []string{activitystream.ToPublic}, followers, []activitystream.Object{activitystream.NewMention("https://pawoo.net/users/kugayama")})
-	create := noteToCreate(note)
-	err = sendNote(followers, note)
-	if err != nil {
-		log.Printf("err: %v", err)
-	}
-	err = saveToOutbox(id, create)
-	if err != nil {
-		//
-		log.Printf("err: %v", err)
-		panic(err)
-	}
-	err = saveStatus(id, note)
-	if err != nil {
-		//
-		log.Printf("err: %v", err)
-		panic(err)
-	}
-
-	respondAsJSON(w, http.StatusOK, create)
-}
-
 func main() {
 	r := httprouter.New()
 	r.Handler(http.MethodGet, "/", httperror.HandleFuncWithError(indexHandler))
@@ -359,9 +323,6 @@ func main() {
 
 	r.Handler(http.MethodGet, "/.well-known/webfinger", httperror.HandleFuncWithError(webfingerHandler))
 	r.Handler(http.MethodGet, "/.well-known/host-meta", httperror.HandleFuncWithError(hostMetaHandler))
-
-	r.GET("/test", test)
-	r.POST("/yappi-", yappi)
 
 	if os.Getenv("ENV") == "development" {
 		http.ListenAndServe("localhost:8080", r)
