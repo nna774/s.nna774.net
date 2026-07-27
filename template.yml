@@ -12,8 +12,10 @@ Resources:
   Function:
     Type: AWS::Serverless::Function
     Properties:
-      Handler: s.nna774.net
-      Runtime: go1.x
+      Handler: bootstrap
+      Runtime: provided.al2023
+      Architectures:
+        - arm64
       FunctionName: s-nna774-net
       Timeout: 30
       Environment:
