@@ -24,7 +24,15 @@ type Config struct {
 	Name           string   `yaml:"name"`
 	Origin         string   `yaml:"origin"`
 	IconURI        string   `yaml:"icon_uri"`
+	Summary        string   `yaml:"summary"`
 	PublicKeyName  string   `yaml:"public_key_name"`
+
+	// AutoAcceptFollow が false の場合、受け取った Follow は pending で
+	// 保留し、手動で Accept するまでフォロワーに数えない。
+	AutoAcceptFollow bool `yaml:"auto_accept_follow"`
+	// HideCollections が true の場合、followers / following の中身と件数を
+	// 公開しない。
+	HideCollections bool `yaml:"hide_collections"`
 
 	// PrivateKeyFile は ENV=development のときだけ使う。
 	PrivateKeyFile string `yaml:"private_key_file"`

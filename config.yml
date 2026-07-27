@@ -5,6 +5,12 @@ alias_usernames:
 name: 久我山菜々
 origin: https://s.nna774.net
 icon_uri: https://nna774.net/img/1012_filtered.jpg
+summary: B95 H108 S102
+# 受け取った Follow を自動で Accept するか。false の場合は pending で
+# 保留し、手動で Accept するまでフォロワーに数えない。
+auto_accept_follow: true
+# followers / following の中身と件数を公開しないか。
+hide_collections: false
 public_key_name: main-key
 # private_key_file は ENV=development のときだけ使う。公開鍵は秘密鍵から
 # 導出するので pub.key は読まない。

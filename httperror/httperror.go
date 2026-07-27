@@ -34,6 +34,15 @@ func newStatusError(code int, message string, cause error) HttpError {
 func StatusNotFound(message string, root error) HttpError {
 	return newStatusError(http.StatusNotFound, message, root)
 }
+func StatusUnauthorized(message string, root error) HttpError {
+	return newStatusError(http.StatusUnauthorized, message, root)
+}
+func StatusForbidden(message string, root error) HttpError {
+	return newStatusError(http.StatusForbidden, message, root)
+}
+func StatusBadRequest(message string, root error) HttpError {
+	return newStatusError(http.StatusBadRequest, message, root)
+}
 func StatusUnprocessableEntity(message string, root error) HttpError {
 	return newStatusError(http.StatusUnprocessableEntity, message, root)
 }

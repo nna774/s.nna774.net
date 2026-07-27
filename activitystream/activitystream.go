@@ -185,13 +185,15 @@ type Object struct {
 	Endpoints         *Endpoints `json:"endpoints,omitempty"`
 	PublicKey         *PublicKey `json:"publicKey,omitempty"`
 
-	TotalItems   *int      `json:"totalItems,omitempty"`
-	First        string    `json:"first,omitempty"`
-	Last         string    `json:"last,omitempty"`
-	Next         string    `json:"next,omitempty"`
-	Prev         string    `json:"prev,omitempty"`
-	PartOf       string    `json:"partOf,omitempty"`
-	OrderedItems []*Object `json:"orderedItems,omitempty"`
+	TotalItems *int   `json:"totalItems,omitempty"`
+	First      string `json:"first,omitempty"`
+	Last       string `json:"last,omitempty"`
+	Next       string `json:"next,omitempty"`
+	Prev       string `json:"prev,omitempty"`
+	PartOf     string `json:"partOf,omitempty"`
+	// OrderedItems は要素がオブジェクトのことも裸の URI 文字列のことも
+	// ある。outbox は前者、followers / following は後者。
+	OrderedItems []*Ref `json:"orderedItems,omitempty"`
 }
 
 type Endpoints struct {
@@ -372,7 +374,28 @@ func NewOrderedCollection(id string, totalItems int, first string, last string) 
 	}
 }
 
+// NewOrderedCollectionOfIDs は URI の並びをそのまま orderedItems に持つ
+// OrderedCollection を作る。followers / following はこの形で返す。
+func NewOrderedCollectionOfIDs(id string, ids []string) *Object {
+	total := len(ids)
+	items := make([]*Ref, 0, len(ids))
+	for _, s := range ids {
+		items = append(items, URIRef(s))
+	}
+	return &Object{
+		Context:      ContextActivityStreams,
+		ID:           id,
+		Type:         OrderedCollectionType,
+		TotalItems:   &total,
+		OrderedItems: items,
+	}
+}
+
 func NewOrderedCollectionPage(id string, partOf string, next string, prev string, orderedItems []*Object) *Object {
+	items := make([]*Ref, 0, len(orderedItems))
+	for _, o := range orderedItems {
+		items = append(items, ObjectRef(o))
+	}
 	return &Object{
 		Context:      ContextActivityStreams,
 		ID:           id,
@@ -380,6 +403,6 @@ func NewOrderedCollectionPage(id string, partOf string, next string, prev string
 		PartOf:       partOf,
 		Next:         next,
 		Prev:         prev,
-		OrderedItems: orderedItems,
+		OrderedItems: items,
 	}
 }

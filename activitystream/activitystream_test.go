@@ -143,13 +143,57 @@ func TestDecodeMastodonOrderedCollectionPage(t *testing.T) {
 	if page.Context == nil {
 		t.Error("@context was dropped")
 	}
-	for i, item := range page.OrderedItems {
+	for i, ref := range page.OrderedItems {
+		item := ref.Item()
+		if item == nil {
+			t.Errorf("orderedItems[%d] is a bare URI, want an embedded object", i)
+			continue
+		}
 		if item.Type == "" {
 			t.Errorf("orderedItems[%d] has no type", i)
 		}
 		if item.Actor.ID() == "" {
 			t.Errorf("orderedItems[%d] has no actor", i)
 		}
+	}
+}
+
+// followers / following の orderedItems は裸の URI 文字列の並びである。
+// outbox のようなオブジェクトの並びと同じ型で表せなければならない。
+func TestOrderedCollectionOfIDsEmitsBareURIs(t *testing.T) {
+	ids := []string{"https://pawoo.net/users/kugayama", "https://example.com/u/x"}
+	b, err := json.Marshal(NewOrderedCollectionOfIDs("https://s.nna774.net/u/nana/followers", ids))
+	if err != nil {
+		t.Fatalf("Marshal: %v", err)
+	}
+	var got struct {
+		Type         string   `json:"type"`
+		TotalItems   int      `json:"totalItems"`
+		OrderedItems []string `json:"orderedItems"`
+	}
+	// orderedItems が文字列配列として decode できなければオブジェクトを
+	// 出してしまっている。
+	if err := json.Unmarshal(b, &got); err != nil {
+		t.Fatalf("orderedItems is not an array of strings: %v\n%s", err, b)
+	}
+	if got.Type != OrderedCollectionType {
+		t.Errorf("type = %q, want %q", got.Type, OrderedCollectionType)
+	}
+	if got.TotalItems != 2 {
+		t.Errorf("totalItems = %d, want 2", got.TotalItems)
+	}
+	for i := range ids {
+		if got.OrderedItems[i] != ids[i] {
+			t.Errorf("orderedItems[%d] = %q, want %q", i, got.OrderedItems[i], ids[i])
+		}
+	}
+}
+
+// 空のコレクションでも totalItems: 0 を出し、orderedItems を空配列で返す。
+func TestEmptyCollectionKeepsTotalItems(t *testing.T) {
+	got := marshalToMap(t, NewOrderedCollectionOfIDs("id", nil))
+	if v, ok := got["totalItems"]; !ok || v != float64(0) {
+		t.Errorf("totalItems = %v (present=%v), want 0", v, ok)
 	}
 }
 

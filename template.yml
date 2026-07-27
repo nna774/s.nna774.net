@@ -27,6 +27,7 @@ Resources:
         Variables:
           DYNAMODB_ENDPOINT: ""
           DYNAMODB_TABLE_NAME: !Ref Table
+          DYNAMODB_KV_TABLE_NAME: !Ref KVTable
       Events:
         Root:
           Type: Api
@@ -59,6 +60,28 @@ Resources:
       # (1 RCU / 1 WCU で月 $0.65) よりオンデマンドの方が安く、かつ
       # 1 WCU で書き込みがスロットルする問題も起きない。
       BillingMode: PAY_PER_REQUEST
+  # Table の sort key が数値なので、actor URI をキーに引けない。既存の
+  # 12 件を危険にさらすキースキーマ変更は避け、キー引き用に別テーブルを
+  # 立てる。オンデマンドなので費用は増えない。
+  KVTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: s-nna774-net-kv
+      AttributeDefinitions:
+        - AttributeName: pk
+          AttributeType: S
+        - AttributeName: sk
+          AttributeType: S
+      KeySchema:
+        - AttributeName: pk
+          KeyType: HASH
+        - AttributeName: sk
+          KeyType: RANGE
+      BillingMode: PAY_PER_REQUEST
+      # 公開鍵キャッシュと重複配信の排除には期限がある。
+      TimeToLiveSpecification:
+        AttributeName: ttl
+        Enabled: true
   FunctionRole:
     Type: AWS::IAM::Role
     Properties:
@@ -88,7 +111,10 @@ Resources:
                   - dynamodb:Scan
                   - dynamodb:Update*
                   - dynamodb:PutItem
-                Resource: !GetAtt Table.Arn
+                  - dynamodb:DeleteItem
+                Resource:
+                  - !GetAtt Table.Arn
+                  - !GetAtt KVTable.Arn
               # 署名用の秘密鍵は SecureString として SSM に置く。
               # 標準階層 + AWS 管理キー (aws/ssm) なので費用は発生しない。
               - Effect: Allow

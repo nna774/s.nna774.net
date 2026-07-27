@@ -31,6 +31,7 @@ const configFile = "config.yml"
 
 var region = "ap-northeast-1" //
 var tableName = os.Getenv("DYNAMODB_TABLE_NAME")
+var kvTableName = os.Getenv("DYNAMODB_KV_TABLE_NAME")
 
 // dynamodbEndpoint が空でない場合はそこを向く。dynamodb-local で
 // ローカル検証するときに使う。
@@ -54,7 +55,7 @@ func init() {
 		panic(err)
 	}
 
-	client, err = datastore.NewClient(ctx, region, tableName, dynamodbEndpoint)
+	client, err = datastore.NewClient(ctx, region, tableName, kvTableName, dynamodbEndpoint)
 	if err != nil {
 		panic(err)
 	}
@@ -72,6 +73,13 @@ func followingURI() string { return Config.ID() + "/following" }
 func mainKeyURI() string   { return Config.ID() + "#main-key" }
 
 func myStatusURI(id int) string { return fmt.Sprintf("%s/status/%d", Config.ID(), id) }
+
+// newActivityID は自分が送る Activity の id を作る。リモートは id で
+// 重複を排除するため一意でなければならない。秒精度だと同一秒内の
+// Accept が衝突するのでナノ秒を使う。
+func newActivityID(kind string) string {
+	return fmt.Sprintf("%s/%s/%d", Config.Origin, kind, time.Now().UnixNano())
+}
 
 func respondAsJSON(w http.ResponseWriter, status int, body interface{}) httperror.HttpError {
 	buf := &bytes.Buffer{}
@@ -114,7 +122,7 @@ func webfingerHandler(w http.ResponseWriter, r *http.Request) httperror.HttpErro
 
 func jsonUserHander(w http.ResponseWriter, r *http.Request) httperror.HttpError {
 	resp := activitystream.NewUserResource(
-		Config.ID(), Config.Name, Config.IconURI, Config.IconMediaType(), Config.LocalPart(), inboxURI(), outboxURI(), followersURI(), followingURI(), "B95 H108 S102", mainKeyURI(), Config.PublicKey())
+		Config.ID(), Config.Name, Config.IconURI, Config.IconMediaType(), Config.LocalPart(), inboxURI(), outboxURI(), followersURI(), followingURI(), Config.Summary, mainKeyURI(), Config.PublicKey())
 	return respondAsJSON(w, http.StatusOK, resp)
 }
 
@@ -124,100 +132,6 @@ func userHandler(w http.ResponseWriter, r *http.Request) httperror.HttpError {
 	}
 	w.WriteHeader(http.StatusOK)
 	w.Write([]byte("hello! " + r.URL.Path))
-	return nil
-}
-
-func sendToInboxFromUser(ctx context.Context, to string, object *activitystream.Object) error {
-	actor, err := activitystream.FetchActorInfo(ctx, to)
-	if err != nil {
-		return err
-	}
-	inbox := actor.InboxURI()
-	if inbox == "" {
-		return fmt.Errorf("actor %v advertises no inbox", to)
-	}
-	return sendToInbox(ctx, inbox, object)
-}
-
-func sendToInbox(ctx context.Context, to string, object *activitystream.Object) error {
-	buf := &bytes.Buffer{}
-	err := json.NewEncoder(buf).Encode(object)
-	if err != nil {
-		return err
-	}
-	resp, err := signer.RequestWithSign(ctx, http.MethodPost, to, buf.Bytes())
-	if err != nil {
-		return fmt.Errorf("post to inbox %v failed: %w", to, err)
-	}
-	defer resp.Body.Close()
-	body, _ := io.ReadAll(resp.Body)
-	log.Printf("send to %v: status %v, body: %s", to, resp.StatusCode, body)
-	if resp.StatusCode/100 != 2 {
-		return fmt.Errorf("inbox %v returned %v: %s", to, resp.Status, body)
-	}
-	return nil
-}
-
-// sendAccept は受け取った Activity をそのまま object に入れた Accept を、
-// その送信元の inbox に返す。
-func sendAccept(ctx context.Context, in *activitystream.Object) error {
-	accept := activitystream.NewAccept(in, Config.ID(), Config.Origin+"/accept/"+fmt.Sprintf("%v", time.Now().Unix()))
-	return sendToInboxFromUser(ctx, in.Actor.ID(), accept)
-}
-
-func followHandler(w http.ResponseWriter, r *http.Request, in *activitystream.Object) httperror.HttpError {
-	// TODO: allow only
-	if in.Actor.ID() == "" {
-		return httperror.StatusUnprocessableEntity("Follow has no actor", nil)
-	}
-	// object は文字列 URI で来ることも、埋め込みオブジェクトで来ることも
-	// ある。Ref.ID() がどちらでも id を返す。
-	if in.Object.ID() != Config.ID() {
-		return httperror.StatusUnprocessableEntity(fmt.Sprintf("followHandler: unexpected object: %v", in.Object.ID()), nil)
-	}
-	// Lambda はレスポンスを返した時点で実行環境を凍結するため、goroutine に
-	// 投げた Accept は大抵送信されないまま殺される。同期的に送り、失敗したら
-	// エラーを返して送信元にリトライさせる。
-	if err := sendAccept(r.Context(), in); err != nil {
-		return httperror.StatusInternalServerError("failed to send Accept", err)
-	}
-	respondText(w, http.StatusCreated, "created\n")
-	return nil
-}
-
-func createHandler(w http.ResponseWriter, r *http.Request, in *activitystream.Object) httperror.HttpError {
-	ctx := r.Context()
-	note := in.Object.Item()
-	if note == nil {
-		return httperror.StatusUnprocessableEntity("Create has no embedded object", nil)
-	}
-	id, err := client.Inc(ctx, statusKey)
-	if err != nil {
-		return httperror.StatusInternalServerError("inc failed", err)
-	}
-	if err := saveStatus(ctx, id, note); err != nil {
-		return httperror.StatusInternalServerError("save failed", err)
-	}
-	respondText(w, http.StatusAccepted, "accepted\n")
-	return nil
-}
-
-func postInboxHandler(w http.ResponseWriter, r *http.Request) httperror.HttpError {
-	in := &activitystream.Object{}
-	err := json.NewDecoder(r.Body).Decode(in)
-	if err != nil {
-		return httperror.StatusUnprocessableEntity("decode failed", err)
-	}
-	switch in.Type {
-	case activitystream.FollowType:
-		return followHandler(w, r, in)
-	case activitystream.CreateType:
-		return createHandler(w, r, in)
-	}
-	// 知らない type をエラーにすると送信元が延々リトライするため、
-	// 受け取ったことにして捨てる。
-	log.Printf("inbox: ignoring unhandled type %q from %v", in.Type, in.Actor.ID())
-	respondText(w, http.StatusAccepted, "accepted\n")
 	return nil
 }
 
@@ -300,24 +214,6 @@ func indexHandler(w http.ResponseWriter, r *http.Request) httperror.HttpError {
 	return nil
 }
 
-func sendNote(ctx context.Context, to []string, note *activitystream.Object) error {
-	type r struct {
-		Err error
-		To  string
-	}
-	errs := make([]r, 0)
-	for _, v := range to {
-		err := sendToInbox(ctx, v, noteToCreate(note))
-		if err != nil {
-			errs = append(errs, r{Err: err, To: v})
-		}
-	}
-	if len(errs) == 0 {
-		return nil
-	}
-	return fmt.Errorf("sendNote got errors: %+v", errs)
-}
-
 func noteToCreate(note *activitystream.Object) *activitystream.Object {
 	createID := note.ID + "/activity"
 	return activitystream.NewCreate(createID, note.AttributedTo.ID(), note.To, note.Cc, note)
@@ -343,6 +239,10 @@ func main() {
 	r.Handler(http.MethodGet, "/u/:user/outbox", httperror.HandleFuncWithError(outboxHandler))
 	r.Handler(http.MethodGet, "/u/:user/outbox/page", httperror.HandleFuncWithError(outboxPageHandler))
 	r.Handler(http.MethodGet, "/u/:user/status/:id", httperror.HandleFuncWithError(statusHandler))
+	r.Handler(http.MethodGet, "/u/:user/followers",
+		httperror.HandleFuncWithError(collectionHandler(datastore.KVFollowers, followersURI)))
+	r.Handler(http.MethodGet, "/u/:user/following",
+		httperror.HandleFuncWithError(collectionHandler(datastore.KVFollowing, followingURI)))
 
 	r.Handler(http.MethodGet, "/.well-known/webfinger", httperror.HandleFuncWithError(webfingerHandler))
 	r.Handler(http.MethodGet, "/.well-known/host-meta", httperror.HandleFuncWithError(hostMetaHandler))

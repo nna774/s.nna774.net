@@ -31,11 +31,59 @@ type Client interface {
 	Put(ctx context.Context, name string, id int, object interface{}) error
 	GetObject(ctx context.Context, name string, id int) (*activitystream.Object, error)
 	TakeObject(ctx context.Context, name string, base int, cnt int, order Order) ([]*activitystream.Object, error)
+	DeleteObject(ctx context.Context, name string, id int) error
 
 	Inc(ctx context.Context, key string) (int, error)
 	// Top returns count of the key. if key does not exist, return (0, ErrNotFound)
 	Top(ctx context.Context, key string) (int, error)
+
+	// KV は pk/sk がどちらも文字列のテーブルを使う。actor URI や keyId を
+	// そのままキーにできる。
+	PutKV(ctx context.Context, item *KVItem) error
+	GetKV(ctx context.Context, pk, sk string) (*KVItem, error)
+	QueryKV(ctx context.Context, pk string) ([]*KVItem, error)
+	DeleteKV(ctx context.Context, pk, sk string) error
+	CountKV(ctx context.Context, pk string) (int, error)
 }
+
+// KV のパーティション。
+const (
+	KVFollowers = "followers"
+	KVFollowing = "following"
+	KVActorKey  = "actorkey"
+	KVSeen      = "seen"
+)
+
+// KVItem は KV テーブルの1項目。用途ごとに使うフィールドが異なるので
+// すべて omitempty にしてある。
+type KVItem struct {
+	PK string `dynamo:"pk"`
+	SK string `dynamo:"sk"`
+
+	// フォロワー / フォロー中
+	Inbox       string `dynamo:"inbox,omitempty"`
+	SharedInbox string `dynamo:"sharedInbox,omitempty"`
+	Name        string `dynamo:"name,omitempty"`
+	IconURL     string `dynamo:"iconURL,omitempty"`
+	// ActivityID は Undo を受けたときに突き合わせる元の Follow の id。
+	ActivityID string `dynamo:"activityID,omitempty"`
+	// State は following で使う。pending か accepted。
+	State string `dynamo:"state,omitempty"`
+	// At は登録時刻 (RFC3339)。
+	At string `dynamo:"at,omitempty"`
+
+	// 公開鍵キャッシュ
+	PublicKeyPem string `dynamo:"publicKeyPem,omitempty"`
+	Owner        string `dynamo:"owner,omitempty"`
+
+	// TTL は Unix 秒。0 なら期限なし。
+	TTL int64 `dynamo:"ttl,omitempty"`
+}
+
+const (
+	FollowStatePending  = "pending"
+	FollowStateAccepted = "accepted"
+)
 
 const (
 	partKey = "id"
@@ -60,7 +108,44 @@ type objectContainer struct {
 }
 
 type client struct {
-	table dynamo.Table
+	table   dynamo.Table
+	kvTable dynamo.Table
+}
+
+const (
+	kvPartKey = "pk"
+	kvSortKey = "sk"
+)
+
+func (c *client) PutKV(ctx context.Context, item *KVItem) error {
+	return c.kvTable.Put(item).Run(ctx)
+}
+
+func (c *client) GetKV(ctx context.Context, pk, sk string) (*KVItem, error) {
+	item := &KVItem{}
+	err := c.kvTable.Get(kvPartKey, pk).Range(kvSortKey, dynamo.Equal, sk).One(ctx, item)
+	if err != nil {
+		return nil, err
+	}
+	return item, nil
+}
+
+func (c *client) QueryKV(ctx context.Context, pk string) ([]*KVItem, error) {
+	items := []*KVItem{}
+	if err := c.kvTable.Get(kvPartKey, pk).All(ctx, &items); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+func (c *client) DeleteKV(ctx context.Context, pk, sk string) error {
+	return c.kvTable.Delete(kvPartKey, pk).Range(kvSortKey, sk).Run(ctx)
+}
+
+// CountKV は項目を持ち帰らずに件数だけ数える。フォロワー数の表示に使う。
+func (c *client) CountKV(ctx context.Context, pk string) (int, error) {
+	n, err := c.kvTable.Get(kvPartKey, pk).Count(ctx)
+	return int(n), err
 }
 
 func (c *client) Put(ctx context.Context, name string, id int, object interface{}) error {
@@ -116,6 +201,10 @@ func (c *client) TakeObject(ctx context.Context, name string, base int, cnt int,
 	return res, nil
 }
 
+func (c *client) DeleteObject(ctx context.Context, name string, id int) error {
+	return c.table.Delete(partKey, objectType+name).Range(sortKey, id).Run(ctx)
+}
+
 func (c *client) Inc(ctx context.Context, key string) (int, error) {
 	buf := counterContainer{}
 	// ADD は属性が存在しない場合に 0 からの加算として扱われるので、事前に
@@ -140,7 +229,7 @@ func (c *client) Top(ctx context.Context, key string) (int, error) {
 
 // NewClient は DynamoDB クライアントを作る。endpoint が空でなければそこを
 // 向く (dynamodb-local でのローカル検証用)。
-func NewClient(ctx context.Context, region, tableName, endpoint string) (Client, error) {
+func NewClient(ctx context.Context, region, tableName, kvTableName, endpoint string) (Client, error) {
 	cfg, err := awsconfig.LoadDefaultConfig(ctx, awsconfig.WithRegion(region))
 	if err != nil {
 		return nil, err
@@ -150,5 +239,8 @@ func NewClient(ctx context.Context, region, tableName, endpoint string) (Client,
 			o.BaseEndpoint = aws.String(endpoint)
 		}
 	})
-	return &client{table: db.Table(tableName)}, nil
+	return &client{
+		table:   db.Table(tableName),
+		kvTable: db.Table(kvTableName),
+	}, nil
 }
