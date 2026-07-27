@@ -43,31 +43,34 @@ var signer *httpsigclient.Signer
 var client datastore.Client
 var authenticator *auth.Authenticator
 
-func init() {
-	ctx := context.Background()
-
+// setup は設定・鍵・データストア・認証を初期化する。
+//
+// init() ではなく main() から呼ぶ。init() に置くとテストの実行時にも走り、
+// SSM と DynamoDB への接続を要求してしまう。
+func setup(ctx context.Context) error {
 	cnf, err := config.LoadConfig(ctx, configFile, region)
 	if err != nil {
-		panic(err)
+		return err
 	}
 	Config = cnf
 
 	signer, err = httpsigclient.NewSigner(Config.PrivateKey(), Config.PublicKey(), mainKeyURI())
 	if err != nil {
-		panic(err)
+		return err
 	}
 
 	client, err = datastore.NewClient(ctx, region, tableName, kvTableName, dynamodbEndpoint)
 	if err != nil {
-		panic(err)
+		return err
 	}
 
 	// Cookie の Secure 属性は HTTPS でないと送られない。localhost での
 	// 開発では外す。
 	authenticator, err = auth.New(Config.APIToken(), Config.SessionSecret(), !config.IsDevelopment())
 	if err != nil {
-		panic(err)
+		return err
 	}
+	return nil
 }
 
 const (
@@ -346,6 +349,10 @@ func priv(r *httprouter.Router, method, path string, mutating bool, h httperror.
 }
 
 func main() {
+	if err := setup(context.Background()); err != nil {
+		log.Fatalf("startup failed: %v", err)
+	}
+
 	r := httprouter.New()
 
 	// --- 公開 (認証を掛けてはならない) ---------------------------------
@@ -371,6 +378,9 @@ func main() {
 
 	// --- 私用 (認証必須) ------------------------------------------------
 	priv(r, http.MethodGet, "/timeline", false, timelineHandler)
+	// 他インスタンスのリモートフォローボタンから辿られる。webfinger の
+	// subscribe テンプレートで広告しているので実装が無いと 404 になる。
+	priv(r, http.MethodGet, "/authorize_interaction", false, authorizeInteractionHandler)
 	priv(r, http.MethodPost, "/u/:user/statuses", true, postStatusHandler)
 	// HTML の form は DELETE を送れないので、フォーム用に POST 版も用意する。
 	priv(r, http.MethodPost, "/u/:user/statuses/:id/delete", true, deleteStatusHandler)

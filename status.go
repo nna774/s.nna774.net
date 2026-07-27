@@ -228,6 +228,11 @@ func followRequestHandler(w http.ResponseWriter, r *http.Request) httperror.Http
 	if target == "" {
 		return httperror.StatusUnprocessableEntity("actor must not be empty", nil)
 	}
+	// URI でも @user@host でも受ける。
+	target, err := resolveActorURI(ctx, target)
+	if err != nil {
+		return httperror.StatusUnprocessableEntity("cannot resolve that actor", err)
+	}
 
 	actor, err := fetchActor(ctx, target)
 	if err != nil {

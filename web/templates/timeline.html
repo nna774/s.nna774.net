@@ -19,7 +19,8 @@
 
 <form class="compose" method="post" action="/u/{{.LocalPart}}/following">
   <div class="row">
-    <input type="text" name="actor" placeholder="フォローする actor の URI" required>
+    <input type="text" name="actor" value="{{.FollowPrefill}}"
+           placeholder="フォローしたい相手 (@user@host または actor の URI)" required>
     <button type="submit">フォロー</button>
   </div>
 </form>
