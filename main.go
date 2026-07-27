@@ -18,6 +18,7 @@ import (
 
 	"github.com/julienschmidt/httprouter"
 	"github.com/nna774/s.nna774.net/activitystream"
+	"github.com/nna774/s.nna774.net/auth"
 	"github.com/nna774/s.nna774.net/config"
 	"github.com/nna774/s.nna774.net/datastore"
 	"github.com/nna774/s.nna774.net/httperror"
@@ -40,6 +41,7 @@ var dynamodbEndpoint = os.Getenv("DYNAMODB_ENDPOINT")
 var Config *config.Config
 var signer *httpsigclient.Signer
 var client datastore.Client
+var authenticator *auth.Authenticator
 
 func init() {
 	ctx := context.Background()
@@ -56,6 +58,13 @@ func init() {
 	}
 
 	client, err = datastore.NewClient(ctx, region, tableName, kvTableName, dynamodbEndpoint)
+	if err != nil {
+		panic(err)
+	}
+
+	// Cookie の Secure 属性は HTTPS でないと送られない。localhost での
+	// 開発では外す。
+	authenticator, err = auth.New(Config.APIToken(), Config.SessionSecret(), !config.IsDevelopment())
 	if err != nil {
 		panic(err)
 	}
@@ -82,16 +91,22 @@ func newActivityID(kind string) string {
 }
 
 func respondAsJSON(w http.ResponseWriter, status int, body interface{}) httperror.HttpError {
+	w.Header().Set("Content-Type", activitystream.ContentType)
+	return respondJSONWithoutActivityType(w, status, body)
+}
+
+// respondJSONWithoutActivityType は Content-Type を呼び出し側が決める。
+// webfinger は application/jrd+json、nodeinfo は profile 付きの
+// application/json でなければならないため、activity+json を固定できない。
+func respondJSONWithoutActivityType(w http.ResponseWriter, status int, body interface{}) httperror.HttpError {
 	buf := &bytes.Buffer{}
 	e := json.NewEncoder(buf)
 	e.SetIndent("", "  ")
-	err := e.Encode(body)
-	if err != nil {
+	if err := e.Encode(body); err != nil {
 		return httperror.StatusInternalServerError("json encode failed", err)
 	}
-	w.Header().Set("Content-Type", activitystream.ContentType)
 	w.WriteHeader(status)
-	io.Copy(w, buf)
+	_, _ = io.Copy(w, buf)
 	return nil
 }
 
@@ -110,14 +125,17 @@ func webfingerHandler(w http.ResponseWriter, r *http.Request) httperror.HttpErro
 	if len(resource) != 1 {
 		return httperror.StatusUnprocessableEntity("resource param", nil)
 	}
-	log.Printf("resource: %+v", resource)
-	res := resource[0]
-	res = strings.TrimPrefix(res, "acct:")
-	if !(res == Config.Username || slices.Contains(Config.AliasUsernames, res)) {
+	res := strings.TrimPrefix(resource[0], "acct:")
+	// actor の URI 自体で引かれることもある。
+	if !(res == Config.Username || res == Config.ID() || slices.Contains(Config.AliasUsernames, res)) {
 		return httperror.StatusNotFound(fmt.Sprintf("resource %v not found", resource[0]), nil)
 	}
-	resp := webfinger.NewWebFingerUserResource(Config.Username, Config.ID())
-	return respondAsJSON(w, http.StatusOK, resp)
+	// subject には常に正規のハンドルを返す。旧ハンドルで引かれた場合も
+	// これで正規の方へ誘導される。
+	resp := webfinger.NewWebFingerUserResource(Config.Username, Config.ID(), Config.Origin)
+	// JRD の Content-Type は application/jrd+json である。
+	w.Header().Set("Content-Type", "application/jrd+json; charset=utf-8")
+	return respondJSONWithoutActivityType(w, http.StatusOK, resp)
 }
 
 func jsonUserHander(w http.ResponseWriter, r *http.Request) httperror.HttpError {
@@ -126,13 +144,26 @@ func jsonUserHander(w http.ResponseWriter, r *http.Request) httperror.HttpError 
 	return respondAsJSON(w, http.StatusOK, resp)
 }
 
+// wantsActivityJSON は ActivityPub のクライアントかブラウザかを判定する。
+// 以前は Accept に "json" が含まれるかという雑な判定だった。
+func wantsActivityJSON(r *http.Request) bool {
+	accept := strings.ToLower(r.Header.Get("Accept"))
+	for _, t := range []string{"application/activity+json", "application/ld+json", "application/json"} {
+		if strings.Contains(accept, t) {
+			return true
+		}
+	}
+	return false
+}
+
 func userHandler(w http.ResponseWriter, r *http.Request) httperror.HttpError {
-	if strings.Contains(r.Header.Get("accept"), "json") {
+	// 同じ URI が Accept によって JSON と HTML を返すので、キャッシュに
+	// 混ざらないよう Vary を付ける。
+	w.Header().Set("Vary", "Accept")
+	if wantsActivityJSON(r) {
 		return jsonUserHander(w, r)
 	}
-	w.WriteHeader(http.StatusOK)
-	w.Write([]byte("hello! " + r.URL.Path))
-	return nil
+	return htmlUserHandler(w, r)
 }
 
 func outboxHandler(w http.ResponseWriter, r *http.Request) httperror.HttpError {
@@ -140,7 +171,9 @@ func outboxHandler(w http.ResponseWriter, r *http.Request) httperror.HttpError {
 	if err != nil && !errors.Is(err, datastore.ErrNotFound) { // ErrNotFound の時は1つもitemが無い。
 		return httperror.StatusInternalServerError("cannot fetch from datastore", err)
 	}
-	outbox := activitystream.NewOrderedCollection(outboxURI(), itemsCnt, outboxURI()+"/page", outboxURI()+"/page?since=0")
+	// first は最新から始まるページ、last は最古から始まるページ。
+	outbox := activitystream.NewOrderedCollection(outboxURI(), itemsCnt,
+		outboxURI()+"/page", outboxURI()+"/page?since_id=0")
 	return respondAsJSON(w, http.StatusOK, outbox)
 }
 
@@ -156,52 +189,121 @@ func flattenParam(r *http.Request, name string) (string, error) {
 	return value[0], nil
 }
 
+// intParam は数値のクエリパラメータを読む。省略時は def を返す。
+func intParam(r *http.Request, name string, def int) (int, error) {
+	raw, err := flattenParam(r, name)
+	if err != nil {
+		return 0, err
+	}
+	if raw == "" {
+		return def, nil
+	}
+	n, err := strconv.Atoi(raw)
+	if err != nil {
+		return 0, fmt.Errorf("%v must be a number: %w", name, err)
+	}
+	return n, nil
+}
+
+const outboxPerPage = 20
+
+// absoluteURI は API Gateway 経由だと r.URL に scheme と host が無いため、
+// 設定の origin を足して絶対 URI にする。以前は r.URL.String() をそのまま
+// 使っており "//s.nna774.net/..." という scheme 欠落の id を出していた。
+func absoluteURI(r *http.Request) string {
+	return Config.Origin + r.URL.RequestURI()
+}
+
 func outboxPageHandler(w http.ResponseWriter, r *http.Request) httperror.HttpError {
-	defaultPerPage := 20
-	sinceID, err := flattenParam(r, "since_id")
+	ctx := r.Context()
+
+	// since_id は「これより新しいものを古い順に」、until_id は「これより
+	// 古いものを新しい順に」。どちらも無ければ最新から新しい順に返す。
+	sinceID, err := intParam(r, "since_id", -1)
 	if err != nil {
-		return httperror.StatusUnprocessableEntity("", err)
+		return httperror.StatusUnprocessableEntity("bad since_id", err)
 	}
-	untilID, err := flattenParam(r, "until_id")
+	untilID, err := intParam(r, "until_id", -1)
 	if err != nil {
-		return httperror.StatusUnprocessableEntity("", err)
+		return httperror.StatusUnprocessableEntity("bad until_id", err)
+	}
+	if sinceID >= 0 && untilID >= 0 {
+		return httperror.StatusUnprocessableEntity("give at most one of since_id and until_id", nil)
 	}
 
-	page := (*activitystream.Object)(nil)
-	if sinceID == "" && untilID == "" {
-		items, err := client.TakeObject(r.Context(), outboxKey, datastore.Inf, defaultPerPage, datastore.Desc)
-		if err != nil {
-			return httperror.StatusInternalServerError("failed", err)
+	base, order := datastore.Inf, datastore.Desc
+	switch {
+	case sinceID >= 0:
+		base, order = sinceID, datastore.Asc
+	case untilID >= 0:
+		// until_id 自体は含めない。
+		base, order = untilID-1, datastore.Desc
+	}
+
+	items, err := client.TakeObject(ctx, outboxKey, base, outboxPerPage, order)
+	if err != nil {
+		return httperror.StatusInternalServerError("cannot read the outbox", err)
+	}
+	// 昇順で引いた場合も、返すのは常に新しい順に揃える。
+	if order == datastore.Asc {
+		for i, j := 0, len(items)-1; i < j; i, j = i+1, j-1 {
+			items[i], items[j] = items[j], items[i]
 		}
-		next := "next"
-		prev := "prev"
-		page = activitystream.NewOrderedCollectionPage(r.URL.String(), outboxURI(), next, prev, items)
 	}
 
+	page := activitystream.NewOrderedCollectionPage(
+		absoluteURI(r), outboxURI(), "", "", items)
+
+	// next はより古い方へ、prev はより新しい方へ。端では省く。
+	if len(items) > 0 {
+		newest, herr := statusIDOf(items[0])
+		if herr != nil {
+			return herr
+		}
+		oldest, herr := statusIDOf(items[len(items)-1])
+		if herr != nil {
+			return herr
+		}
+		if len(items) == outboxPerPage {
+			page.Next = fmt.Sprintf("%s/page?until_id=%d", outboxURI(), oldest)
+		}
+		page.Prev = fmt.Sprintf("%s/page?since_id=%d", outboxURI(), newest)
+	}
 	return respondAsJSON(w, http.StatusOK, page)
 }
 
-func statusHandler(w http.ResponseWriter, r *http.Request) httperror.HttpError {
-	params := httprouter.ParamsFromContext(r.Context())
-	idStr := params.ByName("id")
-	id, err := strconv.Atoi(idStr)
+// statusIDOf は Create の中の Note の id から連番を取り出す。ページングの
+// 境界を作るのに使う。
+func statusIDOf(create *activitystream.Object) (int, httperror.HttpError) {
+	uri := create.Object.ID()
+	idx := strings.LastIndex(uri, "/")
+	if idx < 0 {
+		return 0, httperror.StatusInternalServerError("stored outbox item has a malformed object id: "+uri, nil)
+	}
+	n, err := strconv.Atoi(uri[idx+1:])
 	if err != nil {
-		return httperror.StatusUnprocessableEntity(fmt.Sprintf("bad status id: %v", idStr), err)
+		return 0, httperror.StatusInternalServerError("stored outbox item has a non-numeric id: "+uri, err)
+	}
+	return n, nil
+}
+
+func statusHandler(w http.ResponseWriter, r *http.Request) httperror.HttpError {
+	w.Header().Set("Vary", "Accept")
+	id, herr := statusIDFromRequest(r)
+	if herr != nil {
+		return herr
 	}
 	status, err := client.GetObject(r.Context(), statusKey, id)
 	if err != nil {
-		return httperror.StatusUnprocessableEntity("fetch failed", err)
+		if errors.Is(err, datastore.ErrNotFound) {
+			return httperror.StatusNotFound("no such status", err)
+		}
+		return httperror.StatusInternalServerError("cannot load the status", err)
+	}
+	if !wantsActivityJSON(r) {
+		return htmlStatusHandler(w, r, id, status)
 	}
 	return respondAsJSON(w, http.StatusOK, status)
-}
-
-func hostMetaHandler(w http.ResponseWriter, r *http.Request) httperror.HttpError {
-	w.WriteHeader(http.StatusOK)
-	w.Write([]byte(`<?xml version="1.0" encoding="UTF-8"?>
-<XRD xmlns="http://docs.oasis-open.org/ns/xri/xrd-1.0">
-  <Link rel="lrdd" template="https://s.nna774.net/.well-known/webfinger?resource={uri}"/>
-</XRD>`))
-	return nil
 }
 
 func indexHandler(w http.ResponseWriter, r *http.Request) httperror.HttpError {
@@ -231,21 +333,50 @@ func saveToOutbox(ctx context.Context, id int, create *activitystream.Object) er
 	return err
 }
 
+// pub は認証を掛けないエンドポイントを登録する。連合が依存するものは
+// すべてこちらでなければならない。
+func pub(r *httprouter.Router, method, path string, h httperror.HandleFuncWithError) {
+	r.Handler(method, path, h)
+}
+
+// priv は認証必須のエンドポイントを登録する。mutating が true のものには
+// CSRF 対策 (Sec-Fetch-Site の検証) も掛かる。
+func priv(r *httprouter.Router, method, path string, mutating bool, h httperror.HandleFuncWithError) {
+	r.Handler(method, path, requireAuth(mutating, h))
+}
+
 func main() {
 	r := httprouter.New()
-	r.Handler(http.MethodGet, "/", httperror.HandleFuncWithError(indexHandler))
-	r.Handler(http.MethodGet, "/u/:user", httperror.HandleFuncWithError(userHandler))
-	r.Handler(http.MethodPost, "/u/:user/inbox", httperror.HandleFuncWithError(postInboxHandler))
-	r.Handler(http.MethodGet, "/u/:user/outbox", httperror.HandleFuncWithError(outboxHandler))
-	r.Handler(http.MethodGet, "/u/:user/outbox/page", httperror.HandleFuncWithError(outboxPageHandler))
-	r.Handler(http.MethodGet, "/u/:user/status/:id", httperror.HandleFuncWithError(statusHandler))
-	r.Handler(http.MethodGet, "/u/:user/followers",
-		httperror.HandleFuncWithError(collectionHandler(datastore.KVFollowers, followersURI)))
-	r.Handler(http.MethodGet, "/u/:user/following",
-		httperror.HandleFuncWithError(collectionHandler(datastore.KVFollowing, followingURI)))
 
-	r.Handler(http.MethodGet, "/.well-known/webfinger", httperror.HandleFuncWithError(webfingerHandler))
-	r.Handler(http.MethodGet, "/.well-known/host-meta", httperror.HandleFuncWithError(hostMetaHandler))
+	// --- 公開 (認証を掛けてはならない) ---------------------------------
+	// ここに認証を掛けると連合が黙って壊れる。inbox は HTTP Signature
+	// という別系統で守られている。
+	pub(r, http.MethodGet, "/", indexHandler)
+	pub(r, http.MethodGet, "/u/:user", userHandler)
+	pub(r, http.MethodPost, "/u/:user/inbox", postInboxHandler)
+	pub(r, http.MethodGet, "/u/:user/outbox", outboxHandler)
+	pub(r, http.MethodGet, "/u/:user/outbox/page", outboxPageHandler)
+	pub(r, http.MethodGet, "/u/:user/status/:id", statusHandler)
+	pub(r, http.MethodGet, "/u/:user/followers", collectionHandler(datastore.KVFollowers, followersURI))
+	pub(r, http.MethodGet, "/u/:user/following", collectionHandler(datastore.KVFollowing, followingURI))
+
+	pub(r, http.MethodGet, "/.well-known/webfinger", webfingerHandler)
+	pub(r, http.MethodGet, "/.well-known/host-meta", hostMetaHandler)
+	pub(r, http.MethodGet, "/.well-known/nodeinfo", nodeInfoIndexHandler)
+	pub(r, http.MethodGet, "/nodeinfo/2.1", nodeInfoHandler)
+
+	pub(r, http.MethodGet, "/login", getLoginHandler)
+	pub(r, http.MethodPost, "/login", postLoginHandler)
+	pub(r, http.MethodPost, "/logout", postLogoutHandler)
+
+	// --- 私用 (認証必須) ------------------------------------------------
+	priv(r, http.MethodGet, "/timeline", false, timelineHandler)
+	priv(r, http.MethodPost, "/u/:user/statuses", true, postStatusHandler)
+	// HTML の form は DELETE を送れないので、フォーム用に POST 版も用意する。
+	priv(r, http.MethodPost, "/u/:user/statuses/:id/delete", true, deleteStatusHandler)
+	priv(r, http.MethodDelete, "/u/:user/status/:id", true, deleteStatusHandler)
+	priv(r, http.MethodPost, "/u/:user/following", true, followRequestHandler)
+	priv(r, http.MethodDelete, "/u/:user/following", true, unfollowRequestHandler)
 
 	if config.IsDevelopment() {
 		http.ListenAndServe("localhost:8080", r)

@@ -1,0 +1,11 @@
+{{define "content"}}
+<form class="compose" method="post" action="/login">
+  <input type="hidden" name="next" value="{{.Next}}">
+  <div class="row">
+    <input type="password" name="token" placeholder="トークン" required autofocus
+           autocomplete="current-password" aria-label="トークン">
+    <button type="submit" class="primary">ログイン</button>
+  </div>
+  {{if .Failed}}<p class="error">ログインできなかった。</p>{{end}}
+</form>
+{{end}}

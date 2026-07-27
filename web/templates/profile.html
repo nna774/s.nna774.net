@@ -1,0 +1,30 @@
+{{define "content"}}
+<div class="profile">
+  {{if .IconURL}}<img src="{{.IconURL}}" alt="">{{end}}
+  <div>
+    <h2>{{.Name}}</h2>
+    <div class="handle">{{.Handle}}</div>
+    {{with .Summary}}<div>{{.}}</div>{{end}}
+    <div class="counts">
+      投稿 <b>{{.StatusCount}}</b>
+      {{if not .HideCollections}}
+        ・ フォロワー <b>{{.FollowerCount}}</b>
+        ・ フォロー <b>{{.FollowingCount}}</b>
+      {{end}}
+    </div>
+  </div>
+</div>
+
+{{if .Statuses}}
+  {{range .Statuses}}
+    <article>
+      <div class="body">{{sanitize .Content}}</div>
+      <div class="meta">
+        <a href="{{.URL}}">{{datetime .Published}}</a>
+      </div>
+    </article>
+  {{end}}
+{{else}}
+  <p class="empty">まだ投稿がない。</p>
+{{end}}
+{{end}}

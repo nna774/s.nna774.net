@@ -6,6 +6,11 @@ BUCKET := nana-lambda
 
 STACK_NAME := s-nna774-net
 TABLE_NAME := s-nna774-net
+KV_TABLE_NAME := s-nna774-net-kv
+
+# ローカル開発用の資格情報。本番では SSM から読む。
+DEV_API_TOKEN := dev-token
+DEV_SESSION_SECRET := dev-session-secret
 
 OUT := s.nna774.net
 # provided.al2023 は zip 直下の bootstrap という実行ファイルを起動する。
@@ -24,7 +29,9 @@ app:
 dev: app
 	ENV=development \
 	DYNAMODB_TABLE_NAME=$(TABLE_NAME) \
+	DYNAMODB_KV_TABLE_NAME=$(KV_TABLE_NAME) \
 	DYNAMODB_ENDPOINT=$(DYNAMODB_LOCAL_ENDPOINT) \
+	API_TOKEN=$(DEV_API_TOKEN) SESSION_SECRET=$(DEV_SESSION_SECRET) \
 	AWS_ACCESS_KEY_ID=dummy AWS_SECRET_ACCESS_KEY=dummy AWS_REGION=$(REGION) \
 	./$(OUT)
 
@@ -98,5 +105,12 @@ local-table:
 		--table-name $(TABLE_NAME) \
 		--attribute-definitions AttributeName=id,AttributeType=S AttributeName=num,AttributeType=N \
 		--key-schema AttributeName=id,KeyType=HASH AttributeName=num,KeyType=RANGE \
+		--billing-mode PAY_PER_REQUEST
+	AWS_ACCESS_KEY_ID=dummy AWS_SECRET_ACCESS_KEY=dummy \
+	aws dynamodb create-table \
+		--endpoint-url $(DYNAMODB_LOCAL_ENDPOINT) --region $(REGION) \
+		--table-name $(KV_TABLE_NAME) \
+		--attribute-definitions AttributeName=pk,AttributeType=S AttributeName=sk,AttributeType=S \
+		--key-schema AttributeName=pk,KeyType=HASH AttributeName=sk,KeyType=RANGE \
 		--billing-mode PAY_PER_REQUEST
 .PHONY: local-table

@@ -1,7 +1,11 @@
-username: 'nana@nna774.net'
+# 正規のハンドル。webfinger の subject に出る。旧ハンドルで引かれても
+# こちらへ誘導される。
+# https://docs.joinmastodon.org/spec/webfinger/#mastodons-requirements-for-webfinger
+username: 'nana@s.nna774.net'
 alias_usernames:
-  # https://docs.joinmastodon.org/spec/webfinger/#mastodons-requirements-for-webfinger
-  - nana@s.nna774.net
+  # nna774.net は webfinger を s.nna774.net に 302 リダイレクトしている
+  # ため、旧ハンドルでも引ける。
+  - nana@nna774.net
 name: 久我山菜々
 origin: https://s.nna774.net
 icon_uri: https://nna774.net/img/1012_filtered.jpg
@@ -16,3 +20,8 @@ public_key_name: main-key
 # 導出するので pub.key は読まない。
 private_key_file: private.key
 private_key_parameter: /s.nna774.net/private-key
+# 私用エンドポイント (投稿・タイムライン・フォロー) の資格情報と、
+# Cookie 署名用の HMAC 鍵。別に持つことで、後者を差し替えるだけで
+# 全セッションを失効させられる。
+api_token_parameter: /s.nna774.net/api-token
+session_secret_parameter: /s.nna774.net/session-secret

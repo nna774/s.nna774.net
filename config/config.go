@@ -39,9 +39,16 @@ type Config struct {
 	// PrivateKeyParameter は SSM Parameter Store のパラメータ名。
 	// ENV=development 以外ではこちらから読む。
 	PrivateKeyParameter string `yaml:"private_key_parameter"`
+	// APITokenParameter は私用エンドポイントの資格情報。
+	APITokenParameter string `yaml:"api_token_parameter"`
+	// SessionSecretParameter は Cookie 署名用の HMAC 鍵。API トークンとは
+	// 別に持つことで、鍵を差し替えるだけで全セッションを失効させられる。
+	SessionSecretParameter string `yaml:"session_secret_parameter"`
 
-	privateKey *rsa.PrivateKey
-	publicKey  string
+	privateKey    *rsa.PrivateKey
+	publicKey     string
+	apiToken      string
+	sessionSecret string
 }
 
 // IsDevelopment はローカル実行かどうかを返す。秘密情報をファイルから
@@ -65,30 +72,54 @@ func (c *Config) IconMediaType() string {
 
 func (c *Config) PrivateKey() *rsa.PrivateKey { return c.privateKey }
 func (c *Config) PublicKey() string           { return c.publicKey }
+func (c *Config) APIToken() string            { return c.apiToken }
+func (c *Config) SessionSecret() string       { return c.sessionSecret }
 
-func (c *Config) loadKeys(ctx context.Context, region string) error {
-	buf, err := c.readPrivateKeyPEM(ctx, region)
+// 開発時の秘密情報は環境変数で渡す。SSM を引かずに動かせるようにする。
+const (
+	devAPITokenEnv      = "API_TOKEN"
+	devSessionSecretEnv = "SESSION_SECRET"
+)
+
+func (c *Config) loadSecrets(ctx context.Context, region string) error {
+	if IsDevelopment() {
+		if c.PrivateKeyFile == "" {
+			return errors.New("private_key_file is required when ENV=development")
+		}
+		buf, err := os.ReadFile(c.PrivateKeyFile)
+		if err != nil {
+			return err
+		}
+		if err := c.setPrivateKey(buf); err != nil {
+			return err
+		}
+		c.apiToken = os.Getenv(devAPITokenEnv)
+		c.sessionSecret = os.Getenv(devSessionSecretEnv)
+		return nil
+	}
+
+	if c.PrivateKeyParameter == "" {
+		return errors.New("private_key_parameter is required")
+	}
+	// 3本まとめて1回の API 呼び出しで引く。コールドスタートで叩く KMS の
+	// 回数を抑えられる。
+	names := []string{c.PrivateKeyParameter}
+	if c.APITokenParameter != "" {
+		names = append(names, c.APITokenParameter)
+	}
+	if c.SessionSecretParameter != "" {
+		names = append(names, c.SessionSecretParameter)
+	}
+	params, err := fetchParameters(ctx, region, names...)
 	if err != nil {
 		return err
 	}
-	return c.setPrivateKey(buf)
-}
-
-func (c *Config) readPrivateKeyPEM(ctx context.Context, region string) ([]byte, error) {
-	if IsDevelopment() {
-		if c.PrivateKeyFile == "" {
-			return nil, errors.New("private_key_file is required when ENV=development")
-		}
-		return os.ReadFile(c.PrivateKeyFile)
+	if err := c.setPrivateKey([]byte(params[c.PrivateKeyParameter])); err != nil {
+		return err
 	}
-	if c.PrivateKeyParameter == "" {
-		return nil, errors.New("private_key_parameter is required")
-	}
-	params, err := fetchParameters(ctx, region, c.PrivateKeyParameter)
-	if err != nil {
-		return nil, err
-	}
-	return []byte(params[c.PrivateKeyParameter]), nil
+	c.apiToken = params[c.APITokenParameter]
+	c.sessionSecret = params[c.SessionSecretParameter]
+	return nil
 }
 
 func (c *Config) setPrivateKey(buf []byte) error {
@@ -167,6 +198,6 @@ func LoadConfig(ctx context.Context, configFile string, region string) (*Config,
 	if err != nil {
 		return nil, err
 	}
-	err = config.loadKeys(ctx, region)
+	err = config.loadSecrets(ctx, region)
 	return config, err
 }

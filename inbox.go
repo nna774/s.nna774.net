@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/nna774/s.nna774.net/activitystream"
@@ -72,13 +73,104 @@ func dispatchInbox(w http.ResponseWriter, r *http.Request, in *activitystream.Ob
 		return acceptHandler(w, r, in)
 	case activitystream.RejectType:
 		return rejectHandler(w, r, in)
-	case activitystream.CreateType:
+	case activitystream.CreateType, activitystream.UpdateType:
 		return createHandler(w, r, in)
+	case activitystream.AnnounceType:
+		return announceHandler(w, r, in)
+	case activitystream.LikeType:
+		return likeHandler(w, r, in)
+	case activitystream.DeleteType:
+		return deleteHandler(w, r, in)
 	}
 	// 知らない type をエラーにすると送信元が延々リトライするため、
 	// 受け取ったことにして捨てる。
 	logf("inbox: ignoring unhandled type %q from %v", in.Type, in.Actor.ID())
 	respondText(w, http.StatusAccepted, "accepted\n")
+	return nil
+}
+
+// announceHandler はブースト。タイムラインに載せる。
+func announceHandler(w http.ResponseWriter, r *http.Request, in *activitystream.Object) httperror.HttpError {
+	if err := appendToTimeline(r.Context(), in); err != nil {
+		return httperror.StatusInternalServerError("cannot save the Announce", err)
+	}
+	respondText(w, http.StatusAccepted, "accepted\n")
+	return nil
+}
+
+// likeHandler は自分の投稿への Like を記録する。
+func likeHandler(w http.ResponseWriter, r *http.Request, in *activitystream.Object) httperror.HttpError {
+	ctx := r.Context()
+	target := in.Object.ID()
+	actorID := in.Actor.ID()
+	if !strings.HasPrefix(target, Config.ID()+"/status/") {
+		logf("inbox: ignoring Like of %v (not ours)", target)
+		respondText(w, http.StatusAccepted, "accepted\n")
+		return nil
+	}
+	if err := client.PutKV(ctx, &datastore.KVItem{
+		PK: datastore.KVLikes,
+		SK: target + "#" + actorID,
+		At: nowRFC3339(),
+	}); err != nil {
+		return httperror.StatusInternalServerError("cannot record the Like", err)
+	}
+	logf("%v liked %v", actorID, target)
+	respondText(w, http.StatusAccepted, "accepted\n")
+	return nil
+}
+
+// deleteHandler は相手が消した投稿をタイムラインから外す。
+//
+// タイムラインは連番キーで持っているため対象を id で直接引けない。
+// 1人用インスタンスで件数が限られるので、直近を走査して消す。
+func deleteHandler(w http.ResponseWriter, r *http.Request, in *activitystream.Object) httperror.HttpError {
+	ctx := r.Context()
+	target := in.Object.ID()
+
+	if isTombstoneDelete(in) {
+		// actor 自身の削除。その相手をフォロワー / フォロー中から外す。
+		actorID := in.Actor.ID()
+		for _, partition := range []string{datastore.KVFollowers, datastore.KVFollowing} {
+			if err := client.DeleteKV(ctx, partition, actorID); err != nil {
+				logf("removing %v from %v failed: %v", actorID, partition, err)
+			}
+		}
+		logf("actor %v was deleted upstream", actorID)
+		respondText(w, http.StatusAccepted, "accepted\n")
+		return nil
+	}
+
+	if target != "" {
+		if err := removeFromTimeline(ctx, target); err != nil {
+			logf("removing %v from the timeline failed: %v", target, err)
+		}
+	}
+	respondText(w, http.StatusAccepted, "accepted\n")
+	return nil
+}
+
+// timelineScanLimit は Delete のときに遡る件数の上限。これより古いものは
+// 消さずに残る。連番キーのテーブルに対する妥協で、無制限に走査させない。
+const timelineScanLimit = 500
+
+func removeFromTimeline(ctx context.Context, objectURI string) error {
+	// 削除で連番に欠番ができるため、位置から番号を逆算してはならない。
+	// TakeEntries で実際の連番ごと取る。
+	entries, err := client.TakeEntries(ctx, timelineKey, datastore.Inf, timelineScanLimit, datastore.Desc)
+	if err != nil {
+		return err
+	}
+	for _, e := range entries {
+		if e.Object.Object.ID() != objectURI {
+			continue
+		}
+		if err := client.DeleteObject(ctx, timelineKey, e.ID); err != nil {
+			return err
+		}
+		logf("removed %v from the timeline", objectURI)
+		return nil
+	}
 	return nil
 }
 

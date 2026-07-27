@@ -31,6 +31,9 @@ type Client interface {
 	Put(ctx context.Context, name string, id int, object interface{}) error
 	GetObject(ctx context.Context, name string, id int) (*activitystream.Object, error)
 	TakeObject(ctx context.Context, name string, base int, cnt int, order Order) ([]*activitystream.Object, error)
+	// TakeEntries は TakeObject と同じだが連番も返す。取得したものを
+	// あとで削除・更新したい場合はこちらを使う。
+	TakeEntries(ctx context.Context, name string, base int, cnt int, order Order) ([]Entry, error)
 	DeleteObject(ctx context.Context, name string, id int) error
 
 	Inc(ctx context.Context, key string) (int, error)
@@ -52,6 +55,7 @@ const (
 	KVFollowing = "following"
 	KVActorKey  = "actorkey"
 	KVSeen      = "seen"
+	KVLikes     = "likes"
 )
 
 // KVItem は KV テーブルの1項目。用途ごとに使うフィールドが異なるので
@@ -174,7 +178,25 @@ func (c *client) GetObject(ctx context.Context, name string, id int) (*activitys
 	return obj, nil
 }
 
+// Entry は保存された Object とその連番の対。
+type Entry struct {
+	ID     int
+	Object *activitystream.Object
+}
+
 func (c *client) TakeObject(ctx context.Context, name string, base int, cnt int, order Order) ([]*activitystream.Object, error) {
+	entries, err := c.TakeEntries(ctx, name, base, cnt, order)
+	if err != nil {
+		return nil, err
+	}
+	res := make([]*activitystream.Object, len(entries))
+	for i, e := range entries {
+		res[i] = e.Object
+	}
+	return res, nil
+}
+
+func (c *client) TakeEntries(ctx context.Context, name string, base int, cnt int, order Order) ([]Entry, error) {
 	// base を境界とする範囲指定と、実際に返す並び順の両方を切り替える必要が
 	// ある。Order を指定しないと DynamoDB は常に sort key の昇順で返すため、
 	// Desc を指定しても古い順に来てしまう。
@@ -191,12 +213,13 @@ func (c *client) TakeObject(ctx context.Context, name string, base int, cnt int,
 	if err != nil {
 		return nil, err
 	}
-	res := make([]*activitystream.Object, len(buf))
+	res := make([]Entry, len(buf))
 	for i, v := range buf {
-		res[i] = &activitystream.Object{}
-		if err := json.Unmarshal([]byte(v.Item), res[i]); err != nil {
+		obj := &activitystream.Object{}
+		if err := json.Unmarshal([]byte(v.Item), obj); err != nil {
 			return nil, fmt.Errorf("stored object %v/%v is broken: %w", name, v.Id, err)
 		}
+		res[i] = Entry{ID: v.Id, Object: obj}
 	}
 	return res, nil
 }

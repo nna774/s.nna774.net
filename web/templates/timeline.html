@@ -1,0 +1,50 @@
+{{define "content"}}
+<form class="compose" method="post" action="/u/{{.LocalPart}}/statuses">
+  {{with .InReplyTo}}
+    <div class="reply-to">返信先: <a href="{{.}}">{{.}}</a></div>
+    <input type="hidden" name="in_reply_to" value="{{.}}">
+  {{end}}
+  <textarea name="content" placeholder="いま何を考えている" required autofocus></textarea>
+  <div class="row">
+    <select name="visibility" aria-label="公開範囲">
+      <option value="public">公開</option>
+      <option value="unlisted">未収載</option>
+      <option value="followers">フォロワーのみ</option>
+    </select>
+    <input type="text" name="mentions" placeholder="メンション先の actor URI (空白区切り)"
+           value="{{.MentionPrefill}}">
+    <button type="submit" class="primary">投稿</button>
+  </div>
+</form>
+
+<form class="compose" method="post" action="/u/{{.LocalPart}}/following">
+  <div class="row">
+    <input type="text" name="actor" placeholder="フォローする actor の URI" required>
+    <button type="submit">フォロー</button>
+  </div>
+</form>
+
+{{if .Items}}
+  {{range .Items}}
+    <article>
+      <div class="who">
+        {{if .IconURL}}<img src="{{.IconURL}}" alt="">{{end}}
+        <span class="name">{{.AuthorName}}</span>
+        <span>{{acct .AuthorURI}}</span>
+      </div>
+      {{with .InReplyTo}}<div class="reply-to">返信: <a href="{{.}}">{{.}}</a></div>{{end}}
+      <div class="body">{{sanitize .Content}}</div>
+      <div class="meta">
+        {{if .ObjectURI}}
+          <a href="{{.ObjectURI}}">{{datetime .Published}}</a>
+        {{else}}
+          <span>{{datetime .Published}}</span>
+        {{end}}
+        <a href="/timeline?in_reply_to={{.ObjectURI}}&amp;mentions={{.AuthorURI}}">返信</a>
+      </div>
+    </article>
+  {{end}}
+{{else}}
+  <p class="empty">受信したものはまだ無い。誰かをフォローすれば流れてくる。</p>
+{{end}}
+{{end}}
