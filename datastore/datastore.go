@@ -1,12 +1,15 @@
 package datastore
 
 import (
+	"context"
 	"encoding/json"
+	"fmt"
 	"math"
 
-	"github.com/aws/aws-sdk-go/aws"
-	"github.com/aws/aws-sdk-go/aws/session"
-	"github.com/guregu/dynamo"
+	"github.com/aws/aws-sdk-go-v2/aws"
+	awsconfig "github.com/aws/aws-sdk-go-v2/config"
+	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
+	"github.com/guregu/dynamo/v2"
 	"github.com/nna774/s.nna774.net/activitystream"
 )
 
@@ -25,13 +28,13 @@ const (
 )
 
 type Client interface {
-	Put(name string, id int, object interface{}) error
-	GetObject(name string, id int) (activitystream.Object, error)
-	TakeObject(name string, base int, cnt int, order Order) ([]activitystream.Object, error)
+	Put(ctx context.Context, name string, id int, object interface{}) error
+	GetObject(ctx context.Context, name string, id int) (activitystream.Object, error)
+	TakeObject(ctx context.Context, name string, base int, cnt int, order Order) ([]activitystream.Object, error)
 
-	Inc(key string) (int, error)
+	Inc(ctx context.Context, key string) (int, error)
 	// Top returns count of the key. if key does not exist, return (0, ErrNotFound)
-	Top(key string) (int, error)
+	Top(ctx context.Context, key string) (int, error)
 }
 
 const (
@@ -57,10 +60,10 @@ type objectContainer struct {
 }
 
 type client struct {
-	table *dynamo.Table
+	table dynamo.Table
 }
 
-func (c *client) Put(name string, id int, object interface{}) error {
+func (c *client) Put(ctx context.Context, name string, id int, object interface{}) error {
 	b, err := json.Marshal(object)
 	if err != nil {
 		return err
@@ -70,67 +73,81 @@ func (c *client) Put(name string, id int, object interface{}) error {
 		Id:   id,
 		Item: string(b),
 	}
-	return c.table.Put(container).Run()
+	return c.table.Put(container).Run(ctx)
 }
 
-func (c *client) GetObject(name string, id int) (activitystream.Object, error) {
-	buf := objectContainer{}
-	err := c.table.Get(partKey, objectType+name).Range(sortKey, dynamo.Equal, id).One(&buf)
+func (c *client) GetObject(ctx context.Context, name string, id int) (activitystream.Object, error) {
 	obj := activitystream.Object{}
-	json.Unmarshal([]byte(buf.Item), &obj)
-	return obj, err
+	buf := objectContainer{}
+	err := c.table.Get(partKey, objectType+name).Range(sortKey, dynamo.Equal, id).One(ctx, &buf)
+	if err != nil {
+		return obj, err
+	}
+	if err := json.Unmarshal([]byte(buf.Item), &obj); err != nil {
+		return obj, fmt.Errorf("stored object %v/%v is broken: %w", name, id, err)
+	}
+	return obj, nil
 }
 
-func (c *client) TakeObject(name string, base int, cnt int, order Order) ([]activitystream.Object, error) {
-	ord := dynamo.GreaterOrEqual
+func (c *client) TakeObject(ctx context.Context, name string, base int, cnt int, order Order) ([]activitystream.Object, error) {
+	// base を境界とする範囲指定と、実際に返す並び順の両方を切り替える必要が
+	// ある。Order を指定しないと DynamoDB は常に sort key の昇順で返すため、
+	// Desc を指定しても古い順に来てしまう。
+	rangeOp, ord := dynamo.GreaterOrEqual, dynamo.Ascending
 	if order == Desc {
-		ord = dynamo.LessOrEqual
+		rangeOp, ord = dynamo.LessOrEqual, dynamo.Descending
 	}
 	buf := []objectContainer{}
-	err := c.table.Get(partKey, objectType+name).Range(sortKey, ord, base).Limit(int64(cnt)).All(&buf)
+	err := c.table.Get(partKey, objectType+name).
+		Range(sortKey, rangeOp, base).
+		Order(ord).
+		Limit(cnt).
+		All(ctx, &buf)
+	if err != nil {
+		return nil, err
+	}
 	res := make([]activitystream.Object, len(buf))
 	for i, v := range buf {
-		obj := activitystream.Object{}
-		json.Unmarshal([]byte(v.Item), &obj)
-		res[i] = obj
+		if err := json.Unmarshal([]byte(v.Item), &res[i]); err != nil {
+			return nil, fmt.Errorf("stored object %v/%v is broken: %w", name, v.Id, err)
+		}
 	}
-	return res, err
+	return res, nil
 }
 
-func (c *client) Inc(key string) (int, error) {
-	// ensure exists
+func (c *client) Inc(ctx context.Context, key string) (int, error) {
 	buf := counterContainer{}
-	dynamoKey := counterType + key
-	err := c.table.Update(partKey, dynamoKey).Range(sortKey, 0).SetIfNotExists(counterValueKey, 0).Value(&buf)
+	// ADD は属性が存在しない場合に 0 からの加算として扱われるので、事前に
+	// SetIfNotExists で初期化する必要はなく、1回のアトミックな更新で済む。
+	err := c.table.Update(partKey, counterType+key).Range(sortKey, 0).
+		Add(counterValueKey, 1).
+		Value(ctx, &buf)
 	if err != nil {
-		return -1, err
+		return 0, err
 	}
-	err = c.table.Update(partKey, dynamoKey).Range(sortKey, 0).SetExpr("'"+counterValueKey+"' = '"+counterValueKey+"' + ?", 1).Value(&buf)
-	return buf.Value, err
+	return buf.Value, nil
 }
 
-func (c *client) Top(key string) (int, error) {
+func (c *client) Top(ctx context.Context, key string) (int, error) {
 	buf := counterContainer{}
-	dynamoKey := counterType + key
-	err := c.table.Get(partKey, dynamoKey).Range(sortKey, dynamo.Equal, 0).One(&buf)
-	return buf.Value, err
+	err := c.table.Get(partKey, counterType+key).Range(sortKey, dynamo.Equal, 0).One(ctx, &buf)
+	if err != nil {
+		return 0, err
+	}
+	return buf.Value, nil
 }
 
-func NewClient(region, tableName string) (Client, error) {
-	t, err := table(region, tableName)
+// NewClient は DynamoDB クライアントを作る。endpoint が空でなければそこを
+// 向く (dynamodb-local でのローカル検証用)。
+func NewClient(ctx context.Context, region, tableName, endpoint string) (Client, error) {
+	cfg, err := awsconfig.LoadDefaultConfig(ctx, awsconfig.WithRegion(region))
 	if err != nil {
 		return nil, err
 	}
-	return &client{table: t}, nil
-}
-
-func table(region, tableName string) (*dynamo.Table, error) {
-	cfg := aws.NewConfig().WithRegion(region)
-	s, err := session.NewSession()
-	if err != nil {
-		return nil, err
-	}
-	db := dynamo.New(s, cfg)
-	t := db.Table(tableName)
-	return &t, nil
+	db := dynamo.New(cfg, func(o *dynamodb.Options) {
+		if endpoint != "" {
+			o.BaseEndpoint = aws.String(endpoint)
+		}
+	})
+	return &client{table: db.Table(tableName)}, nil
 }

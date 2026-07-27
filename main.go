@@ -2,9 +2,12 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
+	"slices"
 	"strconv"
 
 	"log"
@@ -22,7 +25,6 @@ import (
 	"github.com/nna774/s.nna774.net/webfinger"
 
 	"github.com/akrylysov/algnhsa"
-	"golang.org/x/exp/slices"
 )
 
 const configFile = "config.yml"
@@ -30,23 +32,29 @@ const configFile = "config.yml"
 var region = "ap-northeast-1" //
 var tableName = os.Getenv("DYNAMODB_TABLE_NAME")
 
+// dynamodbEndpoint が空でない場合はそこを向く。dynamodb-local で
+// ローカル検証するときに使う。
+var dynamodbEndpoint = os.Getenv("DYNAMODB_ENDPOINT")
+
 var Config *config.Config
 var signer *httpsigclient.Signer
 var client datastore.Client
 
 func init() {
+	ctx := context.Background()
+
 	cnf, err := config.LoadConfig(configFile)
 	if err != nil {
 		panic(err)
 	}
 	Config = cnf
 
-	signer, err = httpsigclient.NewSigner(Config.PrivateKey(), Config.PublicKey(), Config.ID()+"#main-key")
+	signer, err = httpsigclient.NewSigner(Config.PrivateKey(), Config.PublicKey(), mainKeyURI())
 	if err != nil {
 		panic(err)
 	}
 
-	client, err = datastore.NewClient(region, tableName)
+	client, err = datastore.NewClient(ctx, region, tableName, dynamodbEndpoint)
 	if err != nil {
 		panic(err)
 	}
@@ -119,32 +127,36 @@ func userHandler(w http.ResponseWriter, r *http.Request) httperror.HttpError {
 	return nil
 }
 
-func sendToInboxFromUser(to string, object *activitystream.Object) error {
-	ur, err := activitystream.FetchActorInfo(to)
+func sendToInboxFromUser(ctx context.Context, to string, object *activitystream.Object) error {
+	ur, err := activitystream.FetchActorInfo(ctx, to)
 	if err != nil {
 		return err
 	}
-	return sendToInbox(ur.Inbox, object)
+	return sendToInbox(ctx, ur.Inbox, object)
 }
 
-func sendToInbox(to string, object *activitystream.Object) error {
+func sendToInbox(ctx context.Context, to string, object *activitystream.Object) error {
 	buf := &bytes.Buffer{}
 	err := json.NewEncoder(buf).Encode(object)
 	if err != nil {
 		return err
 	}
-	resp, err := signer.RequestWithSign(http.MethodPost, to, buf.Bytes())
-	log.Printf("send: %+v, body: %s, err: %+v", resp, resp.Body, err)
+	resp, err := signer.RequestWithSign(ctx, http.MethodPost, to, buf.Bytes())
 	if err != nil {
-		return err
+		return fmt.Errorf("post to inbox %v failed: %w", to, err)
 	}
 	defer resp.Body.Close()
+	body, _ := io.ReadAll(resp.Body)
+	log.Printf("send to %v: status %v, body: %s", to, resp.StatusCode, body)
+	if resp.StatusCode/100 != 2 {
+		return fmt.Errorf("inbox %v returned %v: %s", to, resp.Status, body)
+	}
 	return nil
 }
 
-func sendAccept(obj *activitystream.Object, act activitystream.Activity) error {
+func sendAccept(ctx context.Context, obj *activitystream.Object, act activitystream.Activity) error {
 	accept := activitystream.NewAccept(act, Config.ID(), Config.Origin+"/accept/"+fmt.Sprintf("%v", time.Now().Unix()))
-	return sendToInboxFromUser(act.Actor, accept)
+	return sendToInboxFromUser(ctx, act.Actor, accept)
 }
 
 func followHandler(w http.ResponseWriter, r *http.Request, in *activitystream.Object) httperror.HttpError {
@@ -156,21 +168,24 @@ func followHandler(w http.ResponseWriter, r *http.Request, in *activitystream.Ob
 	if act.Item.ID != Config.ID() {
 		return httperror.StatusUnprocessableEntity(fmt.Sprintf("followHandler: unexpected object: %v", act.Item), nil)
 	}
+	// Lambda はレスポンスを返した時点で実行環境を凍結するため、goroutine に
+	// 投げた Accept は大抵送信されないまま殺される。同期的に送り、失敗したら
+	// エラーを返して送信元にリトライさせる。
+	if err := sendAccept(r.Context(), in, act); err != nil {
+		return httperror.StatusInternalServerError("failed to send Accept", err)
+	}
 	respondText(w, http.StatusCreated, "created\n")
-	go sendAccept(in, act) // TODO: err
 	return nil
 }
 
 func createHandler(w http.ResponseWriter, r *http.Request, in *activitystream.Object) httperror.HttpError {
+	ctx := r.Context()
 	act, _ := in.Activity()
-	id, err := client.Inc(statusKey)
+	id, err := client.Inc(ctx, statusKey)
 	if err != nil {
 		return httperror.StatusInternalServerError("inc failed", err)
 	}
-	err = saveStatus(id, act.Item)
-	if err != nil {
-		//
-		log.Printf("err: %v", err)
+	if err := saveStatus(ctx, id, act.Item); err != nil {
 		return httperror.StatusInternalServerError("save failed", err)
 	}
 	return nil
@@ -193,8 +208,8 @@ func postInboxHandler(w http.ResponseWriter, r *http.Request) httperror.HttpErro
 }
 
 func outboxHandler(w http.ResponseWriter, r *http.Request) httperror.HttpError {
-	itemsCnt, err := client.Top(outboxKey)
-	if err != nil && err != datastore.ErrNotFound { // ErrNotFound の時は1つもitemが無い。
+	itemsCnt, err := client.Top(r.Context(), outboxKey)
+	if err != nil && !errors.Is(err, datastore.ErrNotFound) { // ErrNotFound の時は1つもitemが無い。
 		return httperror.StatusInternalServerError("cannot fetch from datastore", err)
 	}
 	outbox := activitystream.NewOrderedCollection(outboxURI(), itemsCnt, outboxURI()+"/page", outboxURI()+"/page?since=0")
@@ -226,8 +241,7 @@ func outboxPageHandler(w http.ResponseWriter, r *http.Request) httperror.HttpErr
 
 	page := (*activitystream.Object)(nil)
 	if sinceID == "" && untilID == "" {
-		items, err := client.TakeObject(outboxKey, datastore.Inf, defaultPerPage, datastore.Desc)
-		log.Printf("items: %+v", items)
+		items, err := client.TakeObject(r.Context(), outboxKey, datastore.Inf, defaultPerPage, datastore.Desc)
 		if err != nil {
 			return httperror.StatusInternalServerError("failed", err)
 		}
@@ -246,7 +260,7 @@ func statusHandler(w http.ResponseWriter, r *http.Request) httperror.HttpError {
 	if err != nil {
 		return httperror.StatusUnprocessableEntity(fmt.Sprintf("bad status id: %v", idStr), err)
 	}
-	status, err := client.GetObject(statusKey, id)
+	status, err := client.GetObject(r.Context(), statusKey, id)
 	if err != nil {
 		return httperror.StatusUnprocessableEntity("fetch failed", err)
 	}
@@ -272,14 +286,14 @@ func indexHandler(w http.ResponseWriter, r *http.Request) httperror.HttpError {
 	return nil
 }
 
-func sendNote(to []string, note *activitystream.Object) error {
+func sendNote(ctx context.Context, to []string, note *activitystream.Object) error {
 	type r struct {
 		Err error
 		To  string
 	}
 	errs := make([]r, 0)
 	for _, v := range to {
-		err := sendToInbox(v, noteToCreate(note))
+		err := sendToInbox(ctx, v, noteToCreate(note))
 		if err != nil {
 			errs = append(errs, r{Err: err, To: v})
 		}
@@ -295,20 +309,15 @@ func noteToCreate(note *activitystream.Object) *activitystream.Object {
 	return activitystream.NewCreate(createID, note.AttributedTo, note.To, note.Cc, note)
 }
 
-func saveStatus(id int, noteLike *activitystream.Object) error {
-	err := client.Put(statusKey, id, noteLike)
-	if err != nil {
-		return err
-	}
-	return err
+func saveStatus(ctx context.Context, id int, noteLike *activitystream.Object) error {
+	return client.Put(ctx, statusKey, id, noteLike)
 }
 
-func saveToOutbox(id int, create *activitystream.Object) error {
-	err := client.Put(outboxKey, id, create)
-	if err != nil {
+func saveToOutbox(ctx context.Context, id int, create *activitystream.Object) error {
+	if err := client.Put(ctx, outboxKey, id, create); err != nil {
 		return err
 	}
-	_, err = client.Inc(outboxKey)
+	_, err := client.Inc(ctx, outboxKey)
 	return err
 }
 
@@ -327,6 +336,6 @@ func main() {
 	if os.Getenv("ENV") == "development" {
 		http.ListenAndServe("localhost:8080", r)
 	} else {
-		algnhsa.ListenAndServe(r, &algnhsa.Options{RequestType: algnhsa.RequestTypeAPIGateway})
+		algnhsa.ListenAndServe(r, &algnhsa.Options{RequestType: algnhsa.RequestTypeAPIGatewayV1})
 	}
 }

@@ -2,6 +2,7 @@ package httpsigclient
 
 import (
 	"bytes"
+	"context"
 	"crypto/rsa"
 	"net/http"
 	"strings"
@@ -38,8 +39,8 @@ func NewSigner(privKey *rsa.PrivateKey, publicKey string, keyID string) (*Signer
 	}, nil
 }
 
-func (s *Signer) RequestWithSign(method string, url string, body []byte) (*http.Response, error) {
-	req, err := http.NewRequest(method, url, bytes.NewBuffer(body))
+func (s *Signer) RequestWithSign(ctx context.Context, method string, url string, body []byte) (*http.Response, error) {
+	req, err := http.NewRequestWithContext(ctx, method, url, bytes.NewBuffer(body))
 	if err != nil {
 		return nil, err
 	}

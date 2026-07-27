@@ -1,6 +1,7 @@
 package activitystream
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -143,8 +144,8 @@ type Activity struct {
 	Item  *Object `json:"object,omitempty"`
 }
 
-func FetchActorInfo(actor string) (*UserResource, error) {
-	req, err := http.NewRequest(http.MethodGet, actor, nil)
+func FetchActorInfo(ctx context.Context, actor string) (*UserResource, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, actor, nil)
 	if err != nil {
 		return nil, err
 	}
