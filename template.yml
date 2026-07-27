@@ -12,6 +12,11 @@ Resources:
   Function:
     Type: AWS::Serverless::Function
     Properties:
+      # CodeUri を省略すると SAM はテンプレートのあるディレクトリ全体を
+      # zip し、秘密鍵・ソース・.git まで Lambda に同梱される。
+      # lambda:GetFunction があれば誰でもそれを取得できる。
+      # build/ には bootstrap と config.yml だけを置く (Makefile 参照)。
+      CodeUri: build/
       Handler: bootstrap
       Runtime: provided.al2023
       Architectures:

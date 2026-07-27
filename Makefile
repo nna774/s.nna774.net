@@ -11,6 +11,10 @@ OUT := s.nna774.net
 # provided.al2023 は zip 直下の bootstrap という実行ファイルを起動する。
 # template.yml の Handler の値は事実上使われない。
 BOOTSTRAP := bootstrap
+# デプロイパッケージに入れるものだけを置くディレクトリ。template.yml の
+# CodeUri がここを指す。CodeUri を省略すると SAM はリポジトリ全体を
+# zip するため、秘密鍵やソースや .git まで Lambda に同梱されてしまう。
+BUILD_DIR := build
 
 DYNAMODB_LOCAL_ENDPOINT := http://localhost:8000
 
@@ -36,12 +40,18 @@ lint:
 # lambda.norpc は go1.x 時代の net/rpc 経由の呼び出しを落とす。
 # provided.al2023 では aws-lambda-go が Runtime API を直接叩くため不要。
 # CGO_ENABLED=0 で libc に依存しない静的バイナリにする。
+#
+# config.yml は実行時に読むので同梱が必要。逆に、それ以外は一切
+# 入れてはならない。
 app-for-deploy: clean
-	GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go build -tags lambda.norpc -o $(BOOTSTRAP) .
+	mkdir -p $(BUILD_DIR)
+	GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go build -tags lambda.norpc -o $(BUILD_DIR)/$(BOOTSTRAP) .
+	cp config.yml $(BUILD_DIR)/config.yml
 .PHONY: app-for-deploy
 
 clean:
 	rm -f $(OUT) $(BOOTSTRAP)
+	rm -rf $(BUILD_DIR)
 .PHONY: clean
 
 PRIVATE_KEY := private.key
