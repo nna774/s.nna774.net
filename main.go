@@ -81,7 +81,7 @@ func respondAsJSON(w http.ResponseWriter, status int, body interface{}) httperro
 	if err != nil {
 		return httperror.StatusInternalServerError("json encode failed", err)
 	}
-	w.Header().Set("Content-Type", "application/activity+json")
+	w.Header().Set("Content-Type", activitystream.ContentType)
 	w.WriteHeader(status)
 	io.Copy(w, buf)
 	return nil
@@ -115,7 +115,7 @@ func webfingerHandler(w http.ResponseWriter, r *http.Request) httperror.HttpErro
 func jsonUserHander(w http.ResponseWriter, r *http.Request) httperror.HttpError {
 	resp := activitystream.NewUserResource(
 		Config.ID(), Config.Name, Config.IconURI, Config.IconMediaType(), Config.LocalPart(), inboxURI(), outboxURI(), followersURI(), followingURI(), "B95 H108 S102", mainKeyURI(), Config.PublicKey())
-	return respondAsJSON(w, http.StatusOK, &resp)
+	return respondAsJSON(w, http.StatusOK, resp)
 }
 
 func userHandler(w http.ResponseWriter, r *http.Request) httperror.HttpError {
@@ -128,11 +128,15 @@ func userHandler(w http.ResponseWriter, r *http.Request) httperror.HttpError {
 }
 
 func sendToInboxFromUser(ctx context.Context, to string, object *activitystream.Object) error {
-	ur, err := activitystream.FetchActorInfo(ctx, to)
+	actor, err := activitystream.FetchActorInfo(ctx, to)
 	if err != nil {
 		return err
 	}
-	return sendToInbox(ctx, ur.Inbox, object)
+	inbox := actor.InboxURI()
+	if inbox == "" {
+		return fmt.Errorf("actor %v advertises no inbox", to)
+	}
+	return sendToInbox(ctx, inbox, object)
 }
 
 func sendToInbox(ctx context.Context, to string, object *activitystream.Object) error {
@@ -154,24 +158,27 @@ func sendToInbox(ctx context.Context, to string, object *activitystream.Object) 
 	return nil
 }
 
-func sendAccept(ctx context.Context, obj *activitystream.Object, act activitystream.Activity) error {
-	accept := activitystream.NewAccept(act, Config.ID(), Config.Origin+"/accept/"+fmt.Sprintf("%v", time.Now().Unix()))
-	return sendToInboxFromUser(ctx, act.Actor, accept)
+// sendAccept は受け取った Activity をそのまま object に入れた Accept を、
+// その送信元の inbox に返す。
+func sendAccept(ctx context.Context, in *activitystream.Object) error {
+	accept := activitystream.NewAccept(in, Config.ID(), Config.Origin+"/accept/"+fmt.Sprintf("%v", time.Now().Unix()))
+	return sendToInboxFromUser(ctx, in.Actor.ID(), accept)
 }
 
 func followHandler(w http.ResponseWriter, r *http.Request, in *activitystream.Object) httperror.HttpError {
 	// TODO: allow only
-	act, ok := in.Activity()
-	if !ok {
-		return httperror.StatusUnprocessableEntity("conversion failed", nil)
+	if in.Actor.ID() == "" {
+		return httperror.StatusUnprocessableEntity("Follow has no actor", nil)
 	}
-	if act.Item.ID != Config.ID() {
-		return httperror.StatusUnprocessableEntity(fmt.Sprintf("followHandler: unexpected object: %v", act.Item), nil)
+	// object は文字列 URI で来ることも、埋め込みオブジェクトで来ることも
+	// ある。Ref.ID() がどちらでも id を返す。
+	if in.Object.ID() != Config.ID() {
+		return httperror.StatusUnprocessableEntity(fmt.Sprintf("followHandler: unexpected object: %v", in.Object.ID()), nil)
 	}
 	// Lambda はレスポンスを返した時点で実行環境を凍結するため、goroutine に
 	// 投げた Accept は大抵送信されないまま殺される。同期的に送り、失敗したら
 	// エラーを返して送信元にリトライさせる。
-	if err := sendAccept(r.Context(), in, act); err != nil {
+	if err := sendAccept(r.Context(), in); err != nil {
 		return httperror.StatusInternalServerError("failed to send Accept", err)
 	}
 	respondText(w, http.StatusCreated, "created\n")
@@ -180,14 +187,18 @@ func followHandler(w http.ResponseWriter, r *http.Request, in *activitystream.Ob
 
 func createHandler(w http.ResponseWriter, r *http.Request, in *activitystream.Object) httperror.HttpError {
 	ctx := r.Context()
-	act, _ := in.Activity()
+	note := in.Object.Item()
+	if note == nil {
+		return httperror.StatusUnprocessableEntity("Create has no embedded object", nil)
+	}
 	id, err := client.Inc(ctx, statusKey)
 	if err != nil {
 		return httperror.StatusInternalServerError("inc failed", err)
 	}
-	if err := saveStatus(ctx, id, act.Item); err != nil {
+	if err := saveStatus(ctx, id, note); err != nil {
 		return httperror.StatusInternalServerError("save failed", err)
 	}
+	respondText(w, http.StatusAccepted, "accepted\n")
 	return nil
 }
 
@@ -198,12 +209,15 @@ func postInboxHandler(w http.ResponseWriter, r *http.Request) httperror.HttpErro
 		return httperror.StatusUnprocessableEntity("decode failed", err)
 	}
 	switch in.Type {
-	case "Follow":
+	case activitystream.FollowType:
 		return followHandler(w, r, in)
 	case activitystream.CreateType:
 		return createHandler(w, r, in)
 	}
-	respondText(w, http.StatusCreated, "created\n")
+	// 知らない type をエラーにすると送信元が延々リトライするため、
+	// 受け取ったことにして捨てる。
+	log.Printf("inbox: ignoring unhandled type %q from %v", in.Type, in.Actor.ID())
+	respondText(w, http.StatusAccepted, "accepted\n")
 	return nil
 }
 
@@ -306,7 +320,7 @@ func sendNote(ctx context.Context, to []string, note *activitystream.Object) err
 
 func noteToCreate(note *activitystream.Object) *activitystream.Object {
 	createID := note.ID + "/activity"
-	return activitystream.NewCreate(createID, note.AttributedTo, note.To, note.Cc, note)
+	return activitystream.NewCreate(createID, note.AttributedTo.ID(), note.To, note.Cc, note)
 }
 
 func saveStatus(ctx context.Context, id int, noteLike *activitystream.Object) error {

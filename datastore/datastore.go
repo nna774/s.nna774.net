@@ -29,8 +29,8 @@ const (
 
 type Client interface {
 	Put(ctx context.Context, name string, id int, object interface{}) error
-	GetObject(ctx context.Context, name string, id int) (activitystream.Object, error)
-	TakeObject(ctx context.Context, name string, base int, cnt int, order Order) ([]activitystream.Object, error)
+	GetObject(ctx context.Context, name string, id int) (*activitystream.Object, error)
+	TakeObject(ctx context.Context, name string, base int, cnt int, order Order) ([]*activitystream.Object, error)
 
 	Inc(ctx context.Context, key string) (int, error)
 	// Top returns count of the key. if key does not exist, return (0, ErrNotFound)
@@ -76,20 +76,20 @@ func (c *client) Put(ctx context.Context, name string, id int, object interface{
 	return c.table.Put(container).Run(ctx)
 }
 
-func (c *client) GetObject(ctx context.Context, name string, id int) (activitystream.Object, error) {
-	obj := activitystream.Object{}
+func (c *client) GetObject(ctx context.Context, name string, id int) (*activitystream.Object, error) {
 	buf := objectContainer{}
 	err := c.table.Get(partKey, objectType+name).Range(sortKey, dynamo.Equal, id).One(ctx, &buf)
 	if err != nil {
-		return obj, err
+		return nil, err
 	}
-	if err := json.Unmarshal([]byte(buf.Item), &obj); err != nil {
-		return obj, fmt.Errorf("stored object %v/%v is broken: %w", name, id, err)
+	obj := &activitystream.Object{}
+	if err := json.Unmarshal([]byte(buf.Item), obj); err != nil {
+		return nil, fmt.Errorf("stored object %v/%v is broken: %w", name, id, err)
 	}
 	return obj, nil
 }
 
-func (c *client) TakeObject(ctx context.Context, name string, base int, cnt int, order Order) ([]activitystream.Object, error) {
+func (c *client) TakeObject(ctx context.Context, name string, base int, cnt int, order Order) ([]*activitystream.Object, error) {
 	// base を境界とする範囲指定と、実際に返す並び順の両方を切り替える必要が
 	// ある。Order を指定しないと DynamoDB は常に sort key の昇順で返すため、
 	// Desc を指定しても古い順に来てしまう。
@@ -106,9 +106,10 @@ func (c *client) TakeObject(ctx context.Context, name string, base int, cnt int,
 	if err != nil {
 		return nil, err
 	}
-	res := make([]activitystream.Object, len(buf))
+	res := make([]*activitystream.Object, len(buf))
 	for i, v := range buf {
-		if err := json.Unmarshal([]byte(v.Item), &res[i]); err != nil {
+		res[i] = &activitystream.Object{}
+		if err := json.Unmarshal([]byte(v.Item), res[i]); err != nil {
 			return nil, fmt.Errorf("stored object %v/%v is broken: %w", name, v.Id, err)
 		}
 	}

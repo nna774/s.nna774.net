@@ -1,0 +1,36 @@
+{
+  "@context": "https://www.w3.org/ns/activitystreams",
+  "id": "https://s.nna774.net/u/nana/status/1089/activity",
+  "type": "Create",
+  "to": [
+    "https://www.w3.org/ns/activitystreams#Public"
+  ],
+  "cc": [
+    "https://s.nna774.net/u/nana/followers",
+    "https://pawoo.net/users/kugayama/inbox"
+  ],
+  "actor": "https://s.nna774.net/u/nana",
+  "object": {
+    "@context": "https://www.w3.org/ns/activitystreams",
+    "id": "https://s.nna774.net/u/nana/status/1089",
+    "type": "Note",
+    "url": "https://s.nna774.net/u/nana/status/1089",
+    "to": [
+      "https://www.w3.org/ns/activitystreams#Public"
+    ],
+    "cc": [
+      "https://s.nna774.net/u/nana/followers",
+      "https://pawoo.net/users/kugayama/inbox"
+    ],
+    "content": "やっぴー 1089 <a href=\"https://pawoo.net/@kugayama\" class=\"u-url mention\">@kugayama@pawoo.net</a>",
+    "published": "Sat, 09 Sep 2023 15:11:55 GMT",
+    "attributedTo": "https://s.nna774.net/u/nana",
+    "tag": [
+      {
+        "type": "Mention",
+        "name": "@kugayama@pawoo.net",
+        "href": "https://pawoo.net/users/kugayama"
+      }
+    ]
+  }
+}
