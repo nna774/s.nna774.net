@@ -1,0 +1,7 @@
+{
+  "@context": "https://www.w3.org/ns/activitystreams",
+  "id": "https://s.nna774.net/u/nana#follow/1",
+  "type": "Follow",
+  "actor": "https://s.nna774.net/u/nana",
+  "object": "https://pawoo.net/users/kugayama"
+}
