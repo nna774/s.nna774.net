@@ -5,7 +5,9 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"sort"
 	"strings"
+	"time"
 
 	"github.com/nna774/s.nna774.net/activitystream"
 	"github.com/nna774/s.nna774.net/datastore"
@@ -174,6 +176,13 @@ type timelineItem struct {
 	Published  string
 	ObjectURI  string
 	InReplyTo  string
+	// Mine は自分の投稿かどうか。削除ボタンの出し分けに使う。
+	Mine bool
+	// StatusID は自分の投稿のときだけ入る。削除フォームに使う。
+	StatusID int
+	// sortKey は並べ替え用。published を解釈できたものはその時刻、
+	// 解釈できなければゼロ値。
+	sortKey time.Time
 }
 
 type timelinePage struct {
@@ -187,29 +196,66 @@ type timelinePage struct {
 
 const timelinePageSize = 40
 
+// publishedTime は published を並べ替え可能な時刻にする。実装によって
+// ISO8601 と RFC1123 のどちらも来るため両方受ける。
+func publishedTime(s string) time.Time {
+	for _, layout := range []string{time.RFC3339, time.RFC3339Nano, time.RFC1123, time.RFC1123Z} {
+		if t, err := time.Parse(layout, s); err == nil {
+			return t
+		}
+	}
+	return time.Time{}
+}
+
 func timelineHandler(w http.ResponseWriter, r *http.Request) httperror.HttpError {
 	ctx := r.Context()
 
-	activities, err := client.TakeObject(ctx, timelineKey, datastore.Inf, timelinePageSize, datastore.Desc)
+	// 受信したものと自分の投稿を混ぜる。Mastodon のホームタイムラインも
+	// 自分の投稿を含む。自分自身をフォローするような裏技は要らない。
+	received, err := client.TakeObject(ctx, timelineKey, datastore.Inf, timelinePageSize, datastore.Desc)
 	if err != nil && !errors.Is(err, datastore.ErrNotFound) {
 		return httperror.StatusInternalServerError("cannot read the timeline", err)
 	}
+	mine, err := client.TakeObject(ctx, outboxKey, datastore.Inf, timelinePageSize, datastore.Desc)
+	if err != nil && !errors.Is(err, datastore.ErrNotFound) {
+		return httperror.StatusInternalServerError("cannot read the outbox", err)
+	}
 
-	items := make([]timelineItem, 0, len(activities))
-	for _, act := range activities {
+	items := make([]timelineItem, 0, len(received)+len(mine))
+	for _, act := range append(append([]*activitystream.Object{}, received...), mine...) {
 		note := act.Object.Item()
 		if note == nil {
 			continue
 		}
-		items = append(items, timelineItem{
-			AuthorName: authorName(ctx, act.Actor.ID()),
-			AuthorURI:  act.Actor.ID(),
-			IconURL:    cachedIconURL(ctx, act.Actor.ID()),
-			Content:    note.Content,
-			Published:  note.Published,
-			ObjectURI:  note.ID,
-			InReplyTo:  note.InReplyTo.ID(),
-		})
+		actorURI := act.Actor.ID()
+		isMine := actorURI == Config.ID()
+		item := timelineItem{
+			AuthorURI: actorURI,
+			Content:   note.Content,
+			Published: note.Published,
+			ObjectURI: note.ID,
+			InReplyTo: note.InReplyTo.ID(),
+			Mine:      isMine,
+			sortKey:   publishedTime(note.Published),
+		}
+		if isMine {
+			item.AuthorName = Config.Name
+			item.IconURL = Config.IconURI
+			if n, err := statusIDOf(act); err == nil {
+				item.StatusID = n
+			}
+		} else {
+			item.AuthorName = authorName(ctx, actorURI)
+			item.IconURL = cachedIconURL(ctx, actorURI)
+		}
+		items = append(items, item)
+	}
+	// 新しい順。published を解釈できなかったものは末尾に落ちる。
+	sort.SliceStable(items, func(i, j int) bool {
+		return items[i].sortKey.After(items[j].sortKey)
+	})
+	if len(items) > timelinePageSize {
+		items = items[:timelinePageSize]
 	}
 
 	page := timelinePage{

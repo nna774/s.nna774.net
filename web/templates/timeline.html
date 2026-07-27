@@ -41,7 +41,14 @@
         {{else}}
           <span>{{datetime .Published}}</span>
         {{end}}
-        <a href="/timeline?in_reply_to={{.ObjectURI}}&amp;mentions={{.AuthorURI}}">返信</a>
+        {{if .Mine}}
+          <form method="post" action="/u/{{$.LocalPart}}/statuses/{{.StatusID}}/delete"
+                onsubmit="return confirm('この投稿を削除する。よいか')">
+            <button type="submit">削除</button>
+          </form>
+        {{else}}
+          <a href="/timeline?in_reply_to={{.ObjectURI}}&amp;mentions={{.AuthorURI}}">返信</a>
+        {{end}}
       </div>
     </article>
   {{end}}

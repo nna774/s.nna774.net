@@ -49,7 +49,7 @@ func (req *statusRequest) normalize() error {
 }
 
 // audience は公開範囲から to / cc を決める。
-func (req *statusRequest) audience(followers string) (to []string, cc []string) {
+func (req *statusRequest) audience(followers string, mentioned []string) (to []string, cc []string) {
 	switch req.Visibility {
 	case visibilityUnlisted:
 		// 公開タイムラインには載らないが、URL を知れば誰でも見られる。
@@ -63,7 +63,7 @@ func (req *statusRequest) audience(followers string) (to []string, cc []string) 
 	}
 	// mention 先は actor の URI を cc に入れる。inbox の URI を入れるのは
 	// 誤りで、以前の実装はそうなっていた。
-	cc = append(cc, req.Mentions...)
+	cc = append(cc, mentioned...)
 	return to, cc
 }
 
@@ -107,12 +107,10 @@ func postStatusHandler(w http.ResponseWriter, r *http.Request) httperror.HttpErr
 	if err != nil {
 		return httperror.StatusInternalServerError("cannot allocate a status id", err)
 	}
-	to, cc := req.audience(followersURI())
 
-	tags := make([]*activitystream.Object, 0, len(req.Mentions))
-	for _, m := range req.Mentions {
-		tags = append(tags, activitystream.NewMention(mentionName(ctx, m), m))
-	}
+	// 本文中の @user@host も明示指定もまとめて解決する。
+	mentions := collectMentions(ctx, req.Content, req.Mentions)
+	to, cc := req.audience(followersURI(), mentionURIs(mentions))
 
 	note := activitystream.NewNote(
 		myStatusURI(id),
@@ -120,7 +118,7 @@ func postStatusHandler(w http.ResponseWriter, r *http.Request) httperror.HttpErr
 		// Date ヘッダ書式 (RFC1123) を流用してはならない。以前の実装は
 		// そうなっていた。
 		time.Now().UTC().Format(time.RFC3339),
-		"", req.Content, Config.ID(), to, cc, tags)
+		"", renderContent(req.Content, mentions), Config.ID(), to, cc, mentionTags(mentions))
 	if req.InReplyTo != "" {
 		note.InReplyTo = activitystream.URIRef(req.InReplyTo)
 	}
@@ -139,11 +137,12 @@ func postStatusHandler(w http.ResponseWriter, r *http.Request) httperror.HttpErr
 	if err != nil {
 		return httperror.StatusInternalServerError("cannot list follower inboxes", err)
 	}
-	// mention 先はフォロワーでなくても届ける必要がある。
-	for _, m := range req.Mentions {
-		actor, err := fetchActor(ctx, m)
+	// mention 先はフォロワーでなくても届ける必要がある。フォローされて
+	// いない相手に話しかけられるのはこの経路だけである。
+	for _, m := range mentions {
+		actor, err := fetchActor(ctx, m.ActorURI)
 		if err != nil {
-			logf("cannot fetch mentioned actor %v: %v", m, err)
+			logf("cannot fetch mentioned actor %v: %v", m.ActorURI, err)
 			continue
 		}
 		if inbox := actor.InboxURI(); inbox != "" {

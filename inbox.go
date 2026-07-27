@@ -50,17 +50,31 @@ func postInboxHandler(w http.ResponseWriter, r *http.Request) httperror.HttpErro
 	// 同じ Activity を二度処理しない。相手のリトライで Accept が二重に
 	// 飛んだり、タイムラインに重複が載ったりするのを防ぐ。
 	if in.ID != "" {
-		fresh, err := markSeen(ctx, in.ID)
+		seen, err := alreadySeen(ctx, in.ID)
 		if err != nil {
 			logf("seen check for %v failed: %v", in.ID, err)
-		} else if !fresh {
+		} else if seen {
 			logf("inbox: ignoring duplicate %v (%v)", in.ID, in.Type)
 			respondText(w, http.StatusAccepted, "accepted\n")
 			return nil
 		}
 	}
 
-	return dispatchInbox(w, r, in)
+	if herr := dispatchInbox(w, r, in); herr != nil {
+		return herr
+	}
+
+	// 記録は処理が成功した後に行う。先に記録すると、処理が失敗して 5xx を
+	// 返した後の相手のリトライが「重複」として捨てられ、その Activity は
+	// 永久に失われる。送信側は 2xx を受け取るので成功したと思い込み、
+	// 二度と送ってこない。フォローが成立しないまま相手の UI では
+	// 「フォロー中」に見える、という状態がこれで起きる。
+	if in.ID != "" {
+		if err := markSeen(ctx, in.ID); err != nil {
+			logf("recording %v as seen failed: %v", in.ID, err)
+		}
+	}
+	return nil
 }
 
 func dispatchInbox(w http.ResponseWriter, r *http.Request, in *activitystream.Object) httperror.HttpError {
@@ -225,14 +239,19 @@ func isTombstoneDelete(in *activitystream.Object) bool {
 	return in.Type == activitystream.DeleteType && in.Actor.ID() != "" && in.Actor.ID() == in.Object.ID()
 }
 
-// markSeen は activity id を記録し、初めて見たものなら true を返す。
-func markSeen(ctx context.Context, activityID string) (bool, error) {
+// alreadySeen は activity id を既に処理済みかを返す。
+func alreadySeen(ctx context.Context, activityID string) (bool, error) {
 	if _, err := client.GetKV(ctx, datastore.KVSeen, activityID); err == nil {
-		return false, nil
+		return true, nil
 	} else if !errors.Is(err, datastore.ErrNotFound) {
-		return true, err
+		return false, err
 	}
-	return true, client.PutKV(ctx, &datastore.KVItem{
+	return false, nil
+}
+
+// markSeen は処理に成功した activity id を記録する。
+func markSeen(ctx context.Context, activityID string) error {
+	return client.PutKV(ctx, &datastore.KVItem{
 		PK:  datastore.KVSeen,
 		SK:  activityID,
 		At:  nowRFC3339(),
