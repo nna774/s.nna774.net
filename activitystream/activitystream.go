@@ -7,12 +7,19 @@ import (
 	"net/http"
 )
 
-const ActivityStreamsContentType = `application/ld+json; profile="https://www.w3.org/ns/activitystreams"`
+const (
+	ActivityStreamsContentType = `application/ld+json; profile="https://www.w3.org/ns/activitystreams"`
+
+	ToPublic = "https://www.w3.org/ns/activitystreams#Public"
+)
 
 const (
 	CreateType                = "Create"
 	NoteType                  = "Note"
+	OrderedCollectionType     = "OrderedCollection"
 	OrderedCollectionPageType = "OrderedCollectionPage"
+	personType                = "Person"
+	followType                = "Follow"
 )
 
 type Object struct {
@@ -29,7 +36,7 @@ func (o *Object) UnmarshalJSON(data []byte) error {
 	o.baseObject = obj
 	log.Printf("unmarshal with type %v", obj.Type)
 	switch obj.Type {
-	case CreateType:
+	case CreateType, followType:
 		var val Activity
 		err := json.Unmarshal(data, &val)
 		if err != nil {
@@ -50,12 +57,24 @@ func (o *Object) MarshalJSON() ([]byte, error) {
 			baseObject
 			Activity
 		}{baseObject: o.baseObject, Activity: act})
+	case OrderedCollectionType:
+		c, _ := o.Collection()
+		return json.Marshal(struct {
+			baseObject
+			Collection
+		}{baseObject: o.baseObject, Collection: c})
 	case OrderedCollectionPageType:
 		ocp, _ := o.OrderedCollectionPage()
 		return json.Marshal(struct {
 			baseObject
 			OrderedCollectionPage
 		}{baseObject: o.baseObject, OrderedCollectionPage: ocp})
+	case personType:
+		ur, _ := o.UserResource()
+		return json.Marshal(struct {
+			baseObject
+			UserResource
+		}{baseObject: o.baseObject, UserResource: ur})
 	default:
 		log.Printf("marshal type: %v", o.Type)
 		return json.Marshal(o.baseObject)
@@ -63,8 +82,9 @@ func (o *Object) MarshalJSON() ([]byte, error) {
 }
 
 func (o *Object) Activity() (Activity, bool) {
+	log.Printf("Activititiititititi called with type %+v", o)
 	switch o.Type {
-	case CreateType:
+	case CreateType, followType:
 		act, ok := o.value.(Activity)
 		return act, ok
 	default:
@@ -72,11 +92,27 @@ func (o *Object) Activity() (Activity, bool) {
 	}
 }
 
+func (o *Object) Collection() (Collection, bool) {
+	if o.Type == OrderedCollectionType {
+		ret, ok := o.value.(Collection)
+		return ret, ok
+	}
+	return Collection{}, false
+}
+
 func (o *Object) OrderedCollectionPage() (OrderedCollectionPage, bool) {
 	if o.Type != OrderedCollectionPageType {
 		return OrderedCollectionPage{}, false
 	}
 	ret, ok := o.value.(OrderedCollectionPage)
+	return ret, ok
+}
+
+func (o *Object) UserResource() (UserResource, bool) {
+	if o.Type != personType {
+		return UserResource{}, false
+	}
+	ret, ok := o.value.(UserResource)
 	return ret, ok
 }
 
@@ -103,8 +139,8 @@ type Icon struct {
 }
 
 type Activity struct {
-	Actor string `json:"actor,omitempty"` // TODO: 実はmaybe object
-	Item  Object `json:"object,omitempty"`
+	Actor string  `json:"actor,omitempty"` // TODO: 実はmaybe object
+	Item  *Object `json:"object,omitempty"`
 }
 
 func FetchActorInfo(actor string) (*UserResource, error) {
@@ -153,7 +189,7 @@ func NewUserResource(ID string, name string, IconURI string, iconMediaType strin
 				"https://w3id.org/security/v1",
 			},
 			ID:   ID,
-			Type: "Person",
+			Type: personType,
 			URL:  ID,
 			Name: name,
 			Icon: &Icon{
@@ -209,7 +245,7 @@ func NewNote(noteID string, published string, name string, content string, attri
 		baseObject: baseObject{
 			Context:      "https://www.w3.org/ns/activitystreams",
 			ID:           noteID,
-			Type:         CreateType,
+			Type:         NoteType,
 			URL:          noteID,
 			Published:    published,
 			Name:         name,
@@ -221,7 +257,7 @@ func NewNote(noteID string, published string, name string, content string, attri
 		}}
 }
 
-func NewCreate(createID string, actor string, to []string, cc []string, obj Object) *Object {
+func NewCreate(createID string, actor string, to []string, cc []string, obj *Object) *Object {
 	return &Object{
 		baseObject: baseObject{
 			Context: "https://www.w3.org/ns/activitystreams",

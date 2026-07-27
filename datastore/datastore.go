@@ -44,18 +44,15 @@ const (
 	counterType = "counter--"
 )
 
-type base struct {
-	Name string `dynamo:"id"`
-	Id   int    `dynamo:"num"`
-}
-
 type counterContainer struct {
-	Base  base
-	Value int `dynamo:"val"`
+	Name  string `dynamo:"id"`
+	Id    int    `dynamo:"num"`
+	Value int    `dynamo:"val"`
 }
 
 type objectContainer struct {
-	Base base
+	Name string `dynamo:"id"`
+	Id   int    `dynamo:"num"`
 	Item string `dynamo:"obj"`
 }
 
@@ -69,10 +66,8 @@ func (c *client) Put(name string, id int, object interface{}) error {
 		return err
 	}
 	container := objectContainer{
-		Base: base{
-			Name: objectType + name,
-			Id:   id,
-		},
+		Name: objectType + name,
+		Id:   id,
 		Item: string(b),
 	}
 	return c.table.Put(container).Run()

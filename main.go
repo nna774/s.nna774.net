@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"strconv"
 
 	"log"
 	"net/http"
@@ -51,11 +52,18 @@ func init() {
 	}
 }
 
+const (
+	outboxKey = "outbox"
+	statusKey = "status"
+)
+
 func inboxURI() string     { return Config.ID() + "/inbox" }
 func outboxURI() string    { return Config.ID() + "/outbox" }
 func followersURI() string { return Config.ID() + "/followers" }
 func followingURI() string { return Config.ID() + "/following" }
 func mainKeyURI() string   { return Config.ID() + "#main-key" }
+
+func myStatusURI(id int) string { return fmt.Sprintf("%s/status/%d", Config.ID(), id) }
 
 func respondAsJSON(w http.ResponseWriter, status int, body interface{}) httperror.HttpError {
 	buf := &bytes.Buffer{}
@@ -65,6 +73,7 @@ func respondAsJSON(w http.ResponseWriter, status int, body interface{}) httperro
 	if err != nil {
 		return httperror.StatusInternalServerError("json encode failed", err)
 	}
+	w.Header().Set("Content-Type", "application/activity+json")
 	w.WriteHeader(status)
 	io.Copy(w, buf)
 	return nil
@@ -110,17 +119,21 @@ func userHandler(w http.ResponseWriter, r *http.Request) httperror.HttpError {
 	return nil
 }
 
+func sendToInboxFromUser(to string, object *activitystream.Object) error {
+	ur, err := activitystream.FetchActorInfo(to)
+	if err != nil {
+		return err
+	}
+	return sendToInbox(ur.Inbox, object)
+}
+
 func sendToInbox(to string, object *activitystream.Object) error {
 	buf := &bytes.Buffer{}
 	err := json.NewEncoder(buf).Encode(object)
 	if err != nil {
 		return err
 	}
-	ur, err := activitystream.FetchActorInfo(to)
-	if err != nil {
-		return err
-	}
-	resp, err := signer.RequestWithSign(http.MethodPost, ur.Inbox, buf.Bytes())
+	resp, err := signer.RequestWithSign(http.MethodPost, to, buf.Bytes())
 	log.Printf("send: %+v, body: %s, err: %+v", resp, resp.Body, err)
 	if err != nil {
 		return err
@@ -129,18 +142,12 @@ func sendToInbox(to string, object *activitystream.Object) error {
 	return nil
 }
 
-func sendAccept(obj activitystream.Object, act activitystream.Activity) error {
+func sendAccept(obj *activitystream.Object, act activitystream.Activity) error {
 	accept := activitystream.NewAccept(act, Config.ID(), Config.Origin+"/accept/"+fmt.Sprintf("%v", time.Now().Unix()))
-	return sendToInbox(act.Actor, accept)
+	return sendToInboxFromUser(act.Actor, accept)
 }
 
-func sendNote(to string, note activitystream.Object) error {
-	createID := note.ID + "/activity"
-	create := activitystream.NewCreate(createID, note.AttributedTo, note.To, note.Cc, note)
-	return sendToInbox(to, create)
-}
-
-func followHandler(w http.ResponseWriter, r *http.Request, in activitystream.Object) httperror.HttpError {
+func followHandler(w http.ResponseWriter, r *http.Request, in *activitystream.Object) httperror.HttpError {
 	// TODO: allow only
 	act, ok := in.Activity()
 	if !ok {
@@ -154,21 +161,36 @@ func followHandler(w http.ResponseWriter, r *http.Request, in activitystream.Obj
 	return nil
 }
 
+func createHandler(w http.ResponseWriter, r *http.Request, in *activitystream.Object) httperror.HttpError {
+	act, _ := in.Activity()
+	id, err := client.Inc(statusKey)
+	if err != nil {
+		return httperror.StatusInternalServerError("inc failed", err)
+	}
+	err = saveStatus(id, act.Item)
+	if err != nil {
+		//
+		log.Printf("err: %v", err)
+		return httperror.StatusInternalServerError("save failed", err)
+	}
+	return nil
+}
+
 func postInboxHandler(w http.ResponseWriter, r *http.Request) httperror.HttpError {
-	var in activitystream.Object
-	err := json.NewDecoder(r.Body).Decode(&in)
+	in := &activitystream.Object{}
+	err := json.NewDecoder(r.Body).Decode(in)
 	if err != nil {
 		return httperror.StatusUnprocessableEntity("decode failed", err)
 	}
-	switch strings.ToLower(in.Type) {
-	case "follow":
+	switch in.Type {
+	case "Follow":
 		return followHandler(w, r, in)
+	case activitystream.CreateType:
+		return createHandler(w, r, in)
 	}
 	respondText(w, http.StatusCreated, "created\n")
 	return nil
 }
-
-const outboxKey = "outbox"
 
 func outboxHandler(w http.ResponseWriter, r *http.Request) httperror.HttpError {
 	itemsCnt, err := client.Top(outboxKey)
@@ -217,6 +239,20 @@ func outboxPageHandler(w http.ResponseWriter, r *http.Request) httperror.HttpErr
 	return respondAsJSON(w, http.StatusOK, page)
 }
 
+func statusHandler(w http.ResponseWriter, r *http.Request) httperror.HttpError {
+	params := httprouter.ParamsFromContext(r.Context())
+	idStr := params.ByName("id")
+	id, err := strconv.Atoi(idStr)
+	if err != nil {
+		return httperror.StatusUnprocessableEntity(fmt.Sprintf("bad status id: %v", idStr), err)
+	}
+	status, err := client.GetObject(statusKey, id)
+	if err != nil {
+		return httperror.StatusUnprocessableEntity("fetch failed", err)
+	}
+	return respondAsJSON(w, http.StatusOK, status)
+}
+
 func hostMetaHandler(w http.ResponseWriter, r *http.Request) httperror.HttpError {
 	w.WriteHeader(http.StatusOK)
 	w.Write([]byte(`<?xml version="1.0" encoding="UTF-8"?>
@@ -243,6 +279,75 @@ func test(w http.ResponseWriter, r *http.Request, _ httprouter.Params) {
 	log.Printf("t: %v, err: %v", t, err)
 }
 
+func sendNote(to []string, note *activitystream.Object) error {
+	type r struct {
+		Err error
+		To  string
+	}
+	errs := make([]r, 0)
+	for _, v := range to {
+		err := sendToInbox(v, noteToCreate(note))
+		if err != nil {
+			errs = append(errs, r{Err: err, To: v})
+		}
+	}
+	if len(errs) == 0 {
+		return nil
+	}
+	return fmt.Errorf("sendNote got errors: %+v", errs)
+}
+
+func noteToCreate(note *activitystream.Object) *activitystream.Object {
+	createID := note.ID + "/activity"
+	return activitystream.NewCreate(createID, note.AttributedTo, note.To, note.Cc, note)
+}
+
+func saveStatus(id int, noteLike *activitystream.Object) error {
+	err := client.Put(statusKey, id, noteLike)
+	if err != nil {
+		return err
+	}
+	return err
+}
+
+func saveToOutbox(id int, create *activitystream.Object) error {
+	err := client.Put(outboxKey, id, create)
+	if err != nil {
+		return err
+	}
+	_, err = client.Inc(outboxKey)
+	return err
+}
+
+func yappi(w http.ResponseWriter, r *http.Request, _ httprouter.Params) {
+	id, err := client.Inc(statusKey)
+	if err != nil {
+		panic(err)
+	}
+	statusID := myStatusURI(id)
+	followers := []string{followersURI(), "https://pawoo.net/users/kugayama/inbox"} // TODO:
+	note := activitystream.NewNote(statusID, httpsigclient.CurrentTime(), "", fmt.Sprintf("やっぴー %d <a href=\"https://pawoo.net/@kugayama\" class=\"u-url mention\">@kugayama@pawoo.net</a>", id), Config.ID(), []string{activitystream.ToPublic}, followers, []activitystream.Object{activitystream.NewMention("https://pawoo.net/users/kugayama")})
+	create := noteToCreate(note)
+	err = sendNote(followers, note)
+	if err != nil {
+		log.Printf("err: %v", err)
+	}
+	err = saveToOutbox(id, create)
+	if err != nil {
+		//
+		log.Printf("err: %v", err)
+		panic(err)
+	}
+	err = saveStatus(id, note)
+	if err != nil {
+		//
+		log.Printf("err: %v", err)
+		panic(err)
+	}
+
+	respondAsJSON(w, http.StatusOK, create)
+}
+
 func main() {
 	r := httprouter.New()
 	r.Handler(http.MethodGet, "/", httperror.HandleFuncWithError(indexHandler))
@@ -250,11 +355,13 @@ func main() {
 	r.Handler(http.MethodPost, "/u/:user/inbox", httperror.HandleFuncWithError(postInboxHandler))
 	r.Handler(http.MethodGet, "/u/:user/outbox", httperror.HandleFuncWithError(outboxHandler))
 	r.Handler(http.MethodGet, "/u/:user/outbox/page", httperror.HandleFuncWithError(outboxPageHandler))
+	r.Handler(http.MethodGet, "/u/:user/status/:id", httperror.HandleFuncWithError(statusHandler))
 
 	r.Handler(http.MethodGet, "/.well-known/webfinger", httperror.HandleFuncWithError(webfingerHandler))
 	r.Handler(http.MethodGet, "/.well-known/host-meta", httperror.HandleFuncWithError(hostMetaHandler))
 
 	r.GET("/test", test)
+	r.POST("/yappi-", yappi)
 
 	if os.Getenv("ENV") == "development" {
 		http.ListenAndServe("localhost:8080", r)
