@@ -50,9 +50,10 @@ Resources:
           KeyType: HASH
         - AttributeName: num
           KeyType: RANGE
-      ProvisionedThroughput:
-        ReadCapacityUnits: 1
-        WriteCapacityUnits: 1
+      # 1人用インスタンスでトラフィックは実質ゼロなので、プロビジョンド
+      # (1 RCU / 1 WCU で月 $0.65) よりオンデマンドの方が安く、かつ
+      # 1 WCU で書き込みがスロットルする問題も起きない。
+      BillingMode: PAY_PER_REQUEST
   FunctionRole:
     Type: AWS::IAM::Role
     Properties:

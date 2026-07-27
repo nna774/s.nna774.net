@@ -45,12 +45,26 @@ clean:
 .PHONY: clean
 
 PRIVATE_KEY := private.key
-PUBLIC_KEY := pub.key
+SSM_PRIVATE_KEY_PARAM := /s.nna774.net/private-key
 
+# 公開鍵はアプリが秘密鍵から導出するので、ファイルとしては持たない。
 keys:
 	test -e $(PRIVATE_KEY) || openssl genrsa -out $(PRIVATE_KEY) 2048
-	openssl rsa -pubout < $(PRIVATE_KEY) > $(PUBLIC_KEY)
 .PHONY: keys
+
+# 目視確認用。actor に載る publicKeyPem と同じものが出る。
+pubkey:
+	openssl rsa -pubout < $(PRIVATE_KEY)
+.PHONY: pubkey
+
+# SecureString の標準階層 + AWS 管理キー (aws/ssm) を使う。カスタマー
+# 管理キーを作ると 1 本 1 ドル/月かかるので --key-id は指定しない。
+put-key:
+	aws ssm put-parameter --region $(REGION) \
+		--name $(SSM_PRIVATE_KEY_PARAM) \
+		--type SecureString --tier Standard --overwrite \
+		--value file://$(PRIVATE_KEY)
+.PHONY: put-key
 
 deploy: app-for-deploy
 	$(SAM) deploy --region $(REGION) --s3-bucket $(BUCKET) --template-file template.yml --stack-name $(STACK_NAME) --capabilities CAPABILITY_IAM
