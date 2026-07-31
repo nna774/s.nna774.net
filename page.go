@@ -311,6 +311,10 @@ const (
 	kindAnnounce = "announce"
 	kindMention  = "mention"
 	kindFollow   = "follow"
+	// 取り消しと削除も出来事として並べる。元の通知は消さない。
+	kindUndoLike     = "undo-like"
+	kindUndoAnnounce = "undo-announce"
+	kindDelete       = "delete"
 )
 
 type notificationItem struct {
@@ -413,6 +417,27 @@ func toNotificationItem(ctx context.Context, act *activitystream.Object, excerpt
 		item.ObjectURI = note.ID
 		item.TargetURI = note.InReplyTo.ID()
 		item.TargetExcerpt = myStatusExcerpt(ctx, item.TargetURI, excerpts)
+	case activitystream.UndoType:
+		inner := act.Object.Item()
+		if inner == nil {
+			return notificationItem{}, false
+		}
+		switch inner.Type {
+		case activitystream.LikeType:
+			item.Kind = kindUndoLike
+		case activitystream.AnnounceType:
+			item.Kind = kindUndoAnnounce
+		default:
+			return notificationItem{}, false
+		}
+		// 取り消された対象は自分の投稿なので抜粋が引ける。何を取り消され
+		// たのか分からないと通知として読めない。
+		item.TargetURI = inner.Object.ID()
+		item.TargetExcerpt = myStatusExcerpt(ctx, item.TargetURI, excerpts)
+	case activitystream.DeleteType:
+		item.Kind = kindDelete
+		// 消された投稿なので本文も抜粋も引けない。URI だけ出す。
+		item.ObjectURI = act.Object.ID()
 	default:
 		return notificationItem{}, false
 	}

@@ -83,6 +83,13 @@ func TestNotificationsPageRenders(t *testing.T) {
 				ObjectURI: other + "/statuses/9", Content: "<p>やあ</p>",
 				TargetExcerpt: "返信された投稿", Unread: true},
 			{Kind: kindFollow, ActorName: "someone", ActorURI: other},
+			// 取り消しと削除も出来事として並ぶ。元の通知は消さない。
+			{Kind: kindUndoLike, ActorName: "someone", ActorURI: other,
+				TargetURI: me + "/status/1", TargetExcerpt: "いいねを取り消された投稿"},
+			{Kind: kindUndoAnnounce, ActorName: "someone", ActorURI: other,
+				TargetURI: me + "/status/2", TargetExcerpt: "ブーストを取り消された投稿"},
+			{Kind: kindDelete, ActorName: "someone", ActorURI: other,
+				ObjectURI: other + "/statuses/9"},
 			// 消した投稿へのいいねが残っていることはある。抜粋が空でも
 			// 描画が壊れてはならない。
 			{Kind: kindLike, ActorName: "someone", ActorURI: other, TargetURI: me + "/status/3"},
@@ -96,7 +103,10 @@ func TestNotificationsPageRenders(t *testing.T) {
 	got := buf.String()
 	for _, want := range []string{
 		"がいいねした", "がブーストした", "にフォローされた", "から返信",
-		"いいねされた投稿", "(この投稿は既に無い)",
+		"がいいねを取り消した", "がブーストを取り消した", "が投稿を削除した",
+		"いいねされた投稿", "いいねを取り消された投稿", "(この投稿は既に無い)",
+		// 削除された投稿は URI だけを取り消し線で出す。
+		`class="target gone"`,
 		// 未読の印とヘッダのバッジ。
 		`class="notice unread"`, `class="badge"`,
 		// 返信フォームとフォロー返しのリンク先。

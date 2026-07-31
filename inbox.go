@@ -162,8 +162,19 @@ func deleteHandler(w http.ResponseWriter, r *http.Request, in *activitystream.Ob
 	}
 
 	if target != "" {
+		// 通知に載っているかを先に見る。タイムラインから外すのが先だと、
+		// 通知の判定に使う元の Create を消してしまう実装に変えたときに
+		// 静かに判定できなくなる。
+		notify := notifiedObject(ctx, target)
 		if err := removeFromTimeline(ctx, target); err != nil {
 			logf("removing %v from the timeline failed: %v", target, err)
+		}
+		// 自分宛だった投稿が消されたときだけ通知にする。フォロー相手は
+		// 自分の投稿を消すたびに Delete を全フォロワーに配信するので、
+		// 全部通知にするとノイズにしかならない。
+		if notify {
+			notifyOrLog(ctx, in)
+			logf("%v deleted %v", in.Actor.ID(), target)
 		}
 	}
 	respondText(w, http.StatusAccepted, "accepted\n")
@@ -349,9 +360,10 @@ func undoHandler(w http.ResponseWriter, r *http.Request, in *activitystream.Obje
 				logf("removing the Like of %v by %v failed: %v", target, actorID, err)
 			}
 		}
-		if err := removeNotification(ctx, inner.Type, actorID, target); err != nil {
-			logf("removing the %v notification from %v failed: %v", inner.Type, actorID, err)
-		}
+		// 取り消し自体を出来事として積む。元の通知を消す実装にすると、
+		// 見る前に取り消された場合に「いいねが付いて取り消された」ことに
+		// 気付く手段が無くなる。likes は現在の状態なので消すのが正しい。
+		notifyOrLog(ctx, in)
 		logf("%v undid their %v on %v", actorID, inner.Type, target)
 	default:
 		innerType := ""

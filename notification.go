@@ -15,9 +15,9 @@ import (
 // すべて Activity に載っているため。
 const notificationKey = "notification"
 
-// notificationScanLimit は Undo で取り消された通知を探すときに遡る件数の
-// 上限。連番キーのテーブルは id で直接引けないので走査するしかない。
-// タイムラインの削除と同じ妥協である。
+// notificationScanLimit は通知を遡って探すときの上限。連番キーのテーブル
+// は id で直接引けないので走査するしかない。タイムラインの削除と同じ
+// 妥協である。
 const notificationScanLimit = 500
 
 // unreadCountLimit は未読数を数えるときの打ち切り。これを超えたら
@@ -58,26 +58,27 @@ func notifyOrLog(ctx context.Context, in *activitystream.Object) {
 	}
 }
 
-// removeNotification は Undo で取り消された通知を消す。actor と対象の
-// 両方を見るのは、他人のいいねの通知を消させないため。
-func removeNotification(ctx context.Context, activityType, actorURI, objectURI string) error {
+// notifiedObject は対象の投稿が自分宛として通知に載っているかを返す。
+//
+// 削除を通知にするかの判定に使う。Mastodon は投稿を消すたびに Delete を
+// フォロワー全員に配信するため、届いた Delete をすべて通知にすると
+// フォロー相手の消した独り言まで並んでしまう。
+func notifiedObject(ctx context.Context, objectURI string) bool {
+	if objectURI == "" {
+		return false
+	}
 	entries, err := client.TakeEntries(ctx, notificationKey, datastore.Inf, notificationScanLimit, datastore.Desc)
 	if err != nil {
-		return err
+		logf("looking for a notification of %v failed: %v", objectURI, err)
+		return false
 	}
 	for _, e := range entries {
-		if e.Object.Type != activityType ||
-			e.Object.Actor.ID() != actorURI ||
-			e.Object.Object.ID() != objectURI {
-			continue
+		// 通知に載っている Create の中の Note と突き合わせる。
+		if inner := e.Object.Object.Item(); inner != nil && inner.ID == objectURI {
+			return true
 		}
-		if err := client.DeleteObject(ctx, notificationKey, e.ID); err != nil {
-			return err
-		}
-		logf("removed the %v notification from %v on %v", activityType, actorURI, objectURI)
-		return nil
 	}
-	return nil
+	return false
 }
 
 // notifiesMe は受信した Create / Update が自分宛かを返す。
