@@ -56,6 +56,8 @@ const (
 	KVActorKey  = "actorkey"
 	KVSeen      = "seen"
 	KVLikes     = "likes"
+	// KVCursor は「どこまで読んだか」を持つ。通知の未読判定に使う。
+	KVCursor = "cursor"
 )
 
 // KVItem は KV テーブルの1項目。用途ごとに使うフィールドが異なるので
@@ -79,6 +81,9 @@ type KVItem struct {
 	// 公開鍵キャッシュ
 	PublicKeyPem string `dynamo:"publicKeyPem,omitempty"`
 	Owner        string `dynamo:"owner,omitempty"`
+
+	// Cursor は cursor パーティションで使う既読位置 (連番)。
+	Cursor int `dynamo:"cursor,omitempty"`
 
 	// TTL は Unix 秒。0 なら期限なし。
 	TTL int64 `dynamo:"ttl,omitempty"`

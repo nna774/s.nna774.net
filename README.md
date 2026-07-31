@@ -15,8 +15,8 @@ API Gateway (s.nna774.net)
         ▼
 Lambda (provided.al2023, arm64, bootstrap)
         │
-        ├── DynamoDB s-nna774-net      … 連番で持つもの (投稿・outbox・タイムライン・カウンタ)
-        ├── DynamoDB s-nna774-net-kv   … URI で引くもの (フォロワー・公開鍵キャッシュ・重複排除)
+        ├── DynamoDB s-nna774-net      … 連番で持つもの (投稿・outbox・タイムライン・通知・カウンタ)
+        ├── DynamoDB s-nna774-net-kv   … URI で引くもの (フォロワー・公開鍵キャッシュ・重複排除・いいね・既読位置)
         └── SSM Parameter Store        … 署名鍵・API トークン・Cookie 署名鍵
 ```
 
@@ -32,7 +32,8 @@ Lambda (provided.al2023, arm64, bootstrap)
 
 ハンドラは `main.go` (ルーティングと公開エンドポイント)、`inbox.go` (受信)、
 `status.go` (投稿)、`follower.go`、`delivery.go`、`page.go` (HTML)、
-`actor.go`、`wellknown.go`、`private.go` に分かれている。
+`notification.go` (通知)、`actor.go`、`wellknown.go`、`private.go` に
+分かれている。
 
 ## エンドポイント
 
@@ -59,6 +60,7 @@ Lambda (provided.al2023, arm64, bootstrap)
 | | |
 |---|---|
 | `GET /timeline` | 受信タイムライン (投稿フォーム込み) |
+| `GET /notifications` | 通知 (いいね・ブースト・自分宛の返信・フォロー) |
 | `POST /u/:user/statuses` | 投稿 (JSON / form) |
 | `POST /u/:user/statuses/:id/delete` | 削除 (form 用) |
 | `DELETE /u/:user/status/:id` | 削除 (API 用) |

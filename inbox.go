@@ -349,6 +349,9 @@ func undoHandler(w http.ResponseWriter, r *http.Request, in *activitystream.Obje
 				logf("removing the Like of %v by %v failed: %v", target, actorID, err)
 			}
 		}
+		if err := removeNotification(ctx, inner.Type, actorID, target); err != nil {
+			logf("removing the %v notification from %v failed: %v", inner.Type, actorID, err)
+		}
 		logf("%v undid their %v on %v", actorID, inner.Type, target)
 	default:
 		innerType := ""

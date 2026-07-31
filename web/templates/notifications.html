@@ -1,0 +1,41 @@
+{{define "content"}}
+{{if .Items}}
+  {{range .Items}}
+    <article class="notice{{if .Unread}} unread{{end}}">
+      <div class="who">
+        {{if .IconURL}}<img src="{{.IconURL}}" alt="">{{end}}
+        <a class="name" href="{{.ActorURI}}">{{.ActorName}}</a>
+        <span>{{acct .ActorURI}}</span>
+        <span class="kind">{{if eq .Kind "like"}}がいいねした{{else if eq .Kind "announce"}}がブーストした{{else if eq .Kind "follow"}}にフォローされた{{else}}から返信{{end}}</span>
+      </div>
+
+      {{if eq .Kind "mention"}}
+        {{with .TargetExcerpt}}<div class="reply-to">返信先: {{.}}</div>{{end}}
+        <div class="body">{{sanitize .Content}}</div>
+      {{else if ne .Kind "follow"}}
+        <div class="target">{{with .TargetExcerpt}}{{.}}{{else}}(この投稿は既に無い){{end}}</div>
+      {{end}}
+
+      <div class="meta">
+        {{if eq .Kind "mention"}}
+          {{if .ObjectURI}}<a href="{{.ObjectURI}}">{{datetime .Published}}</a>
+          {{else}}<span>{{datetime .Published}}</span>{{end}}
+          <a href="/timeline?in_reply_to={{.ObjectURI}}&amp;mentions={{.ActorURI}}">返信</a>
+        {{else if .TargetURI}}
+          <a href="{{.TargetURI}}">{{datetime .Published}}</a>
+        {{else}}
+          <span>{{datetime .Published}}</span>
+        {{end}}
+        {{if eq .Kind "follow"}}
+          <form method="post" action="/u/{{$.LocalPart}}/following">
+            <input type="hidden" name="actor" value="{{.ActorURI}}">
+            <button type="submit">フォローを返す</button>
+          </form>
+        {{end}}
+      </div>
+    </article>
+  {{end}}
+{{else}}
+  <p class="empty">通知はまだ無い。</p>
+{{end}}
+{{end}}

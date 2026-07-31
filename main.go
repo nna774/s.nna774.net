@@ -278,14 +278,18 @@ func outboxPageHandler(w http.ResponseWriter, r *http.Request) httperror.HttpErr
 // statusIDOf は Create の中の Note の id から連番を取り出す。ページングの
 // 境界を作るのに使う。
 func statusIDOf(create *activitystream.Object) (int, httperror.HttpError) {
-	uri := create.Object.ID()
+	return statusIDFromURI(create.Object.ID())
+}
+
+// statusIDFromURI は自分の投稿の URI 末尾の連番を取り出す。
+func statusIDFromURI(uri string) (int, httperror.HttpError) {
 	idx := strings.LastIndex(uri, "/")
 	if idx < 0 {
-		return 0, httperror.StatusInternalServerError("stored outbox item has a malformed object id: "+uri, nil)
+		return 0, httperror.StatusInternalServerError("malformed status id: "+uri, nil)
 	}
 	n, err := strconv.Atoi(uri[idx+1:])
 	if err != nil {
-		return 0, httperror.StatusInternalServerError("stored outbox item has a non-numeric id: "+uri, err)
+		return 0, httperror.StatusInternalServerError("non-numeric status id: "+uri, err)
 	}
 	return n, nil
 }
@@ -378,6 +382,7 @@ func main() {
 
 	// --- 私用 (認証必須) ------------------------------------------------
 	priv(r, http.MethodGet, "/timeline", false, timelineHandler)
+	priv(r, http.MethodGet, "/notifications", false, notificationsHandler)
 	// 他インスタンスのリモートフォローボタンから辿られる。webfinger の
 	// subscribe テンプレートで広告しているので実装が無いと 404 になる。
 	priv(r, http.MethodGet, "/authorize_interaction", false, authorizeInteractionHandler)

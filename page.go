@@ -24,6 +24,9 @@ type pageBase struct {
 	Handle    string
 	Authed    bool
 	NoIndex   bool
+	// UnreadCount はヘッダに出す未読通知の数。数えるのに DynamoDB を引く
+	// ので、newPageBase では設定せず、出したいページが自分で入れる。
+	UnreadCount int
 }
 
 func newPageBase(r *http.Request, title string) pageBase {
@@ -263,6 +266,7 @@ func timelineHandler(w http.ResponseWriter, r *http.Request) httperror.HttpError
 		Items:     items,
 		InReplyTo: r.URL.Query().Get("in_reply_to"),
 	}
+	page.UnreadCount = len(unreadNotifications(ctx))
 	// 返信リンクから来たときは mention 先を埋めておく。
 	page.MentionPrefill = r.URL.Query().Get("mentions")
 	page.FollowPrefill = r.URL.Query().Get("follow")
@@ -297,6 +301,149 @@ func lookupKnownActor(ctx context.Context, actorURI string) *datastore.KVItem {
 		}
 	}
 	return nil
+}
+
+// --- 通知 -------------------------------------------------------------
+
+// 通知の種別。テンプレートで文面を分けるために使う。
+const (
+	kindLike     = "like"
+	kindAnnounce = "announce"
+	kindMention  = "mention"
+	kindFollow   = "follow"
+)
+
+type notificationItem struct {
+	Kind      string
+	ActorName string
+	ActorURI  string
+	IconURL   string
+	// TargetURI は Like / Announce の対象になった自分の投稿、または
+	// 返信先の投稿。
+	TargetURI string
+	// TargetExcerpt は対象の投稿の抜粋。何に対するいいねなのか分からないと
+	// 通知として読めない。
+	TargetExcerpt string
+	// Content は返信・メンションの本文。
+	Content string
+	// ObjectURI は相手の投稿。返信リンクに使う。
+	ObjectURI string
+	Published string
+	Unread    bool
+}
+
+type notificationsPage struct {
+	pageBase
+	Items []notificationItem
+}
+
+const notificationPageSize = 40
+
+func notificationsHandler(w http.ResponseWriter, r *http.Request) httperror.HttpError {
+	ctx := r.Context()
+
+	entries, err := client.TakeEntries(ctx, notificationKey, datastore.Inf, notificationPageSize, datastore.Desc)
+	if err != nil && !errors.Is(err, datastore.ErrNotFound) {
+		return httperror.StatusInternalServerError("cannot read the notifications", err)
+	}
+	unread := unreadNotifications(ctx)
+
+	// 同じ投稿に複数のいいねが付くのが普通なので、抜粋は使い回す。
+	excerpts := map[string]string{}
+	items := make([]notificationItem, 0, len(entries))
+	newest := 0
+	for _, e := range entries {
+		if e.ID > newest {
+			newest = e.ID
+		}
+		item, ok := toNotificationItem(ctx, e.Object, excerpts)
+		if !ok {
+			continue
+		}
+		item.Unread = unread[e.ID]
+		items = append(items, item)
+	}
+
+	page := notificationsPage{
+		pageBase: newPageBase(r, "通知"),
+		Items:    items,
+	}
+	page.UnreadCount = len(unread)
+	page.NoIndex = true
+
+	// 既読にするのは描画するものを決めた後。先に進めると、この描画で
+	// 未読マークが付かないまま既読になる。
+	if newest > 0 {
+		if err := advanceReadCursor(ctx, notificationKey, newest); err != nil {
+			logf("advancing the notification cursor failed: %v", err)
+		}
+	}
+	return renderPage(w, "notifications", page)
+}
+
+// toNotificationItem は保存された Activity を表示用に落とす。扱えない
+// type だったときは false を返す。
+func toNotificationItem(ctx context.Context, act *activitystream.Object, excerpts map[string]string) (notificationItem, bool) {
+	// Published は appendNotification が受信時刻で埋めている。連番の降順に
+	// 並べるので、これが並び順と一致する唯一の時刻である。
+	item := notificationItem{
+		ActorURI:  act.Actor.ID(),
+		Published: act.Published,
+	}
+	item.ActorName = authorName(ctx, item.ActorURI)
+	item.IconURL = cachedIconURL(ctx, item.ActorURI)
+
+	switch act.Type {
+	case activitystream.LikeType, activitystream.AnnounceType:
+		item.Kind = kindLike
+		if act.Type == activitystream.AnnounceType {
+			item.Kind = kindAnnounce
+		}
+		item.TargetURI = act.Object.ID()
+		item.TargetExcerpt = myStatusExcerpt(ctx, item.TargetURI, excerpts)
+	case activitystream.FollowType:
+		item.Kind = kindFollow
+	case activitystream.CreateType, activitystream.UpdateType:
+		note := act.Object.Item()
+		if note == nil {
+			return notificationItem{}, false
+		}
+		item.Kind = kindMention
+		item.Content = note.Content
+		item.ObjectURI = note.ID
+		item.TargetURI = note.InReplyTo.ID()
+		item.TargetExcerpt = myStatusExcerpt(ctx, item.TargetURI, excerpts)
+	default:
+		return notificationItem{}, false
+	}
+	return item, true
+}
+
+// myStatusExcerpt は自分の投稿の URI から本文の抜粋を引く。自分の投稿で
+// なければ空を返す。
+func myStatusExcerpt(ctx context.Context, uri string, cache map[string]string) string {
+	if !isMyStatus(uri) {
+		return ""
+	}
+	if s, ok := cache[uri]; ok {
+		return s
+	}
+	cache[uri] = ""
+	id, herr := statusIDFromURI(uri)
+	if herr != nil {
+		return ""
+	}
+	note, err := client.GetObject(ctx, statusKey, id)
+	if err != nil {
+		// 既に消した投稿へのいいねが残っていることはある。通知自体は
+		// 出したいので、抜粋だけ諦める。
+		if !errors.Is(err, datastore.ErrNotFound) {
+			logf("loading %v for a notification failed: %v", uri, err)
+		}
+		return ""
+	}
+	cache[uri] = excerpt(note.Content, 60)
+	return cache[uri]
 }
 
 // --- ログイン ---------------------------------------------------------
