@@ -16,7 +16,7 @@ API Gateway (s.nna774.net)
 Lambda (provided.al2023, arm64, bootstrap)
         │
         ├── DynamoDB s-nna774-net      … 連番で持つもの (投稿・outbox・タイムライン・通知・カウンタ)
-        ├── DynamoDB s-nna774-net-kv   … URI で引くもの (フォロワー・公開鍵キャッシュ・重複排除・いいね・既読位置)
+        ├── DynamoDB s-nna774-net-kv   … URI で引くもの (フォロワー・公開鍵と表示名のキャッシュ・重複排除・いいね・既読位置)
         └── SSM Parameter Store        … 署名鍵・API トークン・Cookie 署名鍵
 ```
 

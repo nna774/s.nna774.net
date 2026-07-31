@@ -58,6 +58,9 @@ const (
 	KVLikes     = "likes"
 	// KVCursor は「どこまで読んだか」を持つ。通知の未読判定に使う。
 	KVCursor = "cursor"
+	// KVActorInfo はフォロー関係にない相手の表示名とアイコンのキャッシュ。
+	// いいねやブーストは誰からでも来る。
+	KVActorInfo = "actorinfo"
 )
 
 // KVItem は KV テーブルの1項目。用途ごとに使うフィールドが異なるので

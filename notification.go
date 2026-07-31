@@ -53,6 +53,9 @@ func appendNotification(ctx context.Context, in *activitystream.Object) error {
 // 副産物であり、これで inbox が 5xx を返すと相手が本体の Activity ごと
 // リトライしてくる。
 func notifyOrLog(ctx context.Context, in *activitystream.Object) {
+	// 表示名とアイコンを受信時に控える。フォロワーでない相手からの通知は
+	// これが無いと actor の URI がそのまま並ぶ。
+	cacheActorInfo(ctx, in.Actor.ID())
 	if err := appendNotification(ctx, in); err != nil {
 		logf("recording a %v notification from %v failed: %v", in.Type, in.Actor.ID(), err)
 	}

@@ -35,6 +35,49 @@ func fetchActor(ctx context.Context, uri string) (*activitystream.Object, error)
 	return actor, nil
 }
 
+// actorInfoTTL は表示名とアイコンのキャッシュの寿命。改名や画像の差し替えに
+// 追従できなくなるので永久には持たない。公開鍵より頻繁に変わらないため
+// 鍵のキャッシュより長くしてある。
+const actorInfoTTL = 7 * 24 * time.Hour
+
+// cacheActorInfo は通知の表示に使う名前とアイコンを控える。
+//
+// いいねやブーストはフォロー関係のない相手からも来る。そういう相手の名前は
+// KV のどこにも無いため、引いておかないと通知欄に actor の URI がそのまま
+// 並ぶ。描画時に取りに行かないのは、ページを開くたびに相手のサーバへ
+// リクエストが飛び、遅いか落ちているだけで表示が崩れるため。
+//
+// 失敗しても呼び出し側は続行してよい。名前が URI のまま出るだけである。
+func cacheActorInfo(ctx context.Context, actorURI string) {
+	if actorURI == "" || actorURI == Config.ID() {
+		return
+	}
+	// フォロー関係にある相手は saveFollower が既に持っている。キャッシュ済み
+	// のものも引き直さない。
+	if lookupKnownActor(ctx, actorURI) != nil {
+		return
+	}
+	actor, err := fetchActor(ctx, actorURI)
+	if err != nil {
+		logf("fetching %v for its display name failed: %v", actorURI, err)
+		return
+	}
+	name, iconURL := actorDisplay(actor)
+	if name == "" && iconURL == "" {
+		return
+	}
+	if err := client.PutKV(ctx, &datastore.KVItem{
+		PK:      datastore.KVActorInfo,
+		SK:      actorURI,
+		Name:    name,
+		IconURL: iconURL,
+		At:      nowRFC3339(),
+		TTL:     time.Now().Add(actorInfoTTL).Unix(),
+	}); err != nil {
+		logf("caching the display name of %v failed: %v", actorURI, err)
+	}
+}
+
 // publicKeyForKeyID は keyId に対応する公開鍵 PEM とその所有者 (actor の id)
 // を返す。キャッシュに無ければ actor を取りに行く。
 //

@@ -241,15 +241,14 @@ func timelineHandler(w http.ResponseWriter, r *http.Request) httperror.HttpError
 			Mine:      isMine,
 			sortKey:   publishedTime(note.Published),
 		}
+		// authorName / cachedIconURL は自分の分も設定から返す。
+		item.AuthorName = authorName(ctx, actorURI)
+		item.IconURL = cachedIconURL(ctx, actorURI)
 		if isMine {
-			item.AuthorName = Config.Name
-			item.IconURL = Config.IconURI
+			// 削除フォームに使う連番は自分の投稿にしか無い。
 			if n, err := statusIDOf(act); err == nil {
 				item.StatusID = n
 			}
-		} else {
-			item.AuthorName = authorName(ctx, actorURI)
-			item.IconURL = cachedIconURL(ctx, actorURI)
 		}
 		items = append(items, item)
 	}
@@ -278,6 +277,9 @@ func timelineHandler(w http.ResponseWriter, r *http.Request) httperror.HttpError
 // authorName / cachedIconURL は KV に持っている表示名とアイコンを引く。
 // 表示のたびにリモートへ actor を取りに行かないための措置。
 func authorName(ctx context.Context, actorURI string) string {
+	if actorURI == Config.ID() {
+		return Config.Name
+	}
 	if it := lookupKnownActor(ctx, actorURI); it != nil && it.Name != "" {
 		return it.Name
 	}
@@ -285,17 +287,22 @@ func authorName(ctx context.Context, actorURI string) string {
 }
 
 func cachedIconURL(ctx context.Context, actorURI string) string {
+	if actorURI == Config.ID() {
+		return Config.IconURI
+	}
 	if it := lookupKnownActor(ctx, actorURI); it != nil {
 		return it.IconURL
 	}
 	return ""
 }
 
+// lookupKnownActor は表示名を持っている項目を探す。フォロー関係を先に見る
+// のは、そちらが期限切れしないため。actorinfo は TTL で消える。
 func lookupKnownActor(ctx context.Context, actorURI string) *datastore.KVItem {
 	if actorURI == "" {
 		return nil
 	}
-	for _, partition := range []string{datastore.KVFollowing, datastore.KVFollowers} {
+	for _, partition := range []string{datastore.KVFollowing, datastore.KVFollowers, datastore.KVActorInfo} {
 		if it, err := client.GetKV(ctx, partition, actorURI); err == nil {
 			return it
 		}

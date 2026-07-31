@@ -16,14 +16,7 @@ func nowRFC3339() string { return time.Now().UTC().Format(time.RFC3339) }
 // アイコンも一緒に持つのは、タイムライン表示のたびにリモートへ actor を
 // 取りに行かずに済ませるため。
 func saveFollower(ctx context.Context, partition string, actor *activitystream.Object, activityID string, state string) error {
-	iconURL := ""
-	if actor.Icon != nil {
-		iconURL = actor.Icon.URL
-	}
-	name := actor.Name
-	if name == "" {
-		name = actor.PreferredUsername
-	}
+	name, iconURL := actorDisplay(actor)
 	return client.PutKV(ctx, &datastore.KVItem{
 		PK:          partition,
 		SK:          actor.ID,
@@ -35,6 +28,19 @@ func saveFollower(ctx context.Context, partition string, actor *activitystream.O
 		State:       state,
 		At:          nowRFC3339(),
 	})
+}
+
+// actorDisplay は actor の表示名とアイコン URL を取り出す。name が無い
+// 実装があるので preferredUsername に落とす。
+func actorDisplay(actor *activitystream.Object) (name string, iconURL string) {
+	if actor.Icon != nil {
+		iconURL = actor.Icon.URL
+	}
+	name = actor.Name
+	if name == "" {
+		name = actor.PreferredUsername
+	}
+	return name, iconURL
 }
 
 func sharedInboxOf(actor *activitystream.Object) string {
