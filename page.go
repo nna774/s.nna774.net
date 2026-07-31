@@ -183,6 +183,10 @@ type timelineItem struct {
 	Mine bool
 	// StatusID は自分の投稿のときだけ入る。削除フォームに使う。
 	StatusID int
+	// BoostedByName / BoostedByURI はブーストのときだけ入る。ブーストは
+	// 書いた人とブーストした人が別なので、著者とは分けて持つ。
+	BoostedByName string
+	BoostedByURI  string
 	// sortKey は並べ替え用。published を解釈できたものはその時刻、
 	// 解釈できなければゼロ値。
 	sortKey time.Time
@@ -230,20 +234,35 @@ func timelineHandler(w http.ResponseWriter, r *http.Request) httperror.HttpError
 		if note == nil {
 			continue
 		}
+		// ブーストは Activity の actor がブーストした人で、著者は中の投稿の
+		// attributedTo である。並べる時刻もブーストされた時刻を使う。元の
+		// 投稿の時刻で並べると、古い投稿のブーストが下に埋もれて見えない。
 		actorURI := act.Actor.ID()
+		published := note.Published
+		boostedBy := ""
+		if act.Type == activitystream.AnnounceType {
+			boostedBy = actorURI
+			actorURI = note.AttributedTo.ID()
+			published = act.Published
+		}
+
 		isMine := actorURI == Config.ID()
 		item := timelineItem{
 			AuthorURI: actorURI,
 			Content:   note.Content,
-			Published: note.Published,
+			Published: published,
 			ObjectURI: note.ID,
 			InReplyTo: note.InReplyTo.ID(),
 			Mine:      isMine,
-			sortKey:   publishedTime(note.Published),
+			sortKey:   publishedTime(published),
 		}
 		// authorName / cachedIconURL は自分の分も設定から返す。
 		item.AuthorName = authorName(ctx, actorURI)
 		item.IconURL = cachedIconURL(ctx, actorURI)
+		if boostedBy != "" {
+			item.BoostedByURI = boostedBy
+			item.BoostedByName = authorName(ctx, boostedBy)
+		}
 		if isMine {
 			// 削除フォームに使う連番は自分の投稿にしか無い。
 			if n, err := statusIDOf(act); err == nil {

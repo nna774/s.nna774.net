@@ -102,18 +102,87 @@ func dispatchInbox(w http.ResponseWriter, r *http.Request, in *activitystream.Ob
 	return nil
 }
 
-// announceHandler はブースト。タイムラインに載せ、自分の投稿が
-// ブーストされたときは通知にも積む。
+// announceHandler はブースト。他人の投稿のブーストはタイムラインに載せ、
+// 自分の投稿のブーストは通知にする。
 func announceHandler(w http.ResponseWriter, r *http.Request, in *activitystream.Object) httperror.HttpError {
 	ctx := r.Context()
-	if err := appendToTimeline(ctx, in); err != nil {
+	target := in.Object.ID()
+
+	if isMyStatus(target) {
+		// 自分の投稿は outbox 経由で既にタイムラインに出ている。ここで
+		// 積むと同じものが二重に並ぶ。通知にだけ出す。
+		notifyOrLog(ctx, in)
+		logf("%v boosted %v", in.Actor.ID(), target)
+		respondText(w, http.StatusAccepted, "accepted\n")
+		return nil
+	}
+
+	announce := *in
+	// 並べ替えに使う時刻。ブーストされた順に並べたいので、元の投稿の
+	// published では代用できない。
+	if announce.Published == "" {
+		announce.Published = nowRFC3339()
+	}
+
+	// Announce の object はほぼ常に文字列 URI で来る。表示のたびにリモートへ
+	// 取りに行かせないよう、受信時に本文を引いて埋め込む。以前はこれを
+	// やっていなかったため、保存はされるのに表示側で Object.Item() が nil に
+	// なり、ブーストが黙って消えていた。
+	if announce.Object.Item() == nil {
+		note, err := boostedNote(ctx, target)
+		if err != nil {
+			// 引けないものはタイムラインに出せない。相手にリトライさせても
+			// 直らないので受け取ったことにして捨てる。
+			logf("inbox: dropping Announce of %v (%v)", target, err)
+			respondText(w, http.StatusAccepted, "accepted\n")
+			return nil
+		}
+		announce.Object = activitystream.ObjectRef(note)
+	}
+	// 元の投稿の著者はフォロー関係にないことが多い。名前とアイコンを控える。
+	if note := announce.Object.Item(); note != nil {
+		cacheActorInfo(ctx, note.AttributedTo.ID())
+	}
+
+	if err := appendToTimeline(ctx, &announce); err != nil {
 		return httperror.StatusInternalServerError("cannot save the Announce", err)
 	}
-	if isMyStatus(in.Object.ID()) {
-		notifyOrLog(ctx, in)
-		logf("%v boosted %v", in.Actor.ID(), in.Object.ID())
-	}
+	logf("%v boosted %v", in.Actor.ID(), target)
 	respondText(w, http.StatusAccepted, "accepted\n")
+	return nil
+}
+
+// boostedNote はブーストされた投稿を引いて中身を確かめる。
+func boostedNote(ctx context.Context, uri string) (*activitystream.Object, error) {
+	note, err := fetchObject(ctx, uri)
+	if err != nil {
+		return nil, err
+	}
+	if err := verifyBoostedNote(note, uri); err != nil {
+		return nil, err
+	}
+	return note, nil
+}
+
+// verifyBoostedNote は引いた投稿が本当にその URI のものかを確かめる。
+//
+// id が違うものを返されたら、タイムラインに全く別の投稿を並べられる。著者の
+// オリジンが投稿のオリジンと一致することも見る。これを見ないと、あるサーバが
+// 「別のサーバの誰かが書いた」と称する投稿を流し込める。
+func verifyBoostedNote(note *activitystream.Object, uri string) error {
+	if note.ID != uri {
+		return fmt.Errorf("%v returned an object whose id is %v", uri, note.ID)
+	}
+	if note.Content == "" {
+		return fmt.Errorf("%v has no content", uri)
+	}
+	author := note.AttributedTo.ID()
+	if author == "" {
+		return fmt.Errorf("%v has no attributedTo", uri)
+	}
+	if !sameOrigin(note.ID, author) {
+		return fmt.Errorf("%v claims to be written by %v", uri, author)
+	}
 	return nil
 }
 

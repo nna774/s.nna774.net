@@ -28,6 +28,9 @@
 {{if .Items}}
   {{range .Items}}
     <article>
+      {{if .BoostedByURI}}
+        <div class="boosted"><a href="{{.BoostedByURI}}">{{.BoostedByName}}</a> がブースト</div>
+      {{end}}
       <div class="who">
         {{if .IconURL}}<img src="{{.IconURL}}" alt="">{{end}}
         <span class="name">{{.AuthorName}}</span>

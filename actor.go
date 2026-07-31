@@ -5,11 +5,15 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
+	"net"
 	"net/http"
 	"net/url"
+	"strings"
 	"time"
 
 	"github.com/nna774/s.nna774.net/activitystream"
+	"github.com/nna774/s.nna774.net/config"
 	"github.com/nna774/s.nna774.net/datastore"
 )
 
@@ -17,22 +21,60 @@ import (
 // 追従できなくなるので永久には持たない。
 const actorKeyTTL = 24 * time.Hour
 
-// fetchActor はリモートの actor を取得する。authorized fetch を有効に
-// しているインスタンスは署名の無い GET を拒否するため、署名して取りに行く。
-func fetchActor(ctx context.Context, uri string) (*activitystream.Object, error) {
+// maxRemoteBody はリモートから読む本文の上限。無制限に読むと巨大な応答で
+// メモリと実行時間を食われる。inbox と同じ値にしてある。
+const maxRemoteBody = 1 << 20 // 1MiB
+
+// fetchObject はリモートのオブジェクトを取得する。authorized fetch を
+// 有効にしているインスタンスは署名の無い GET を拒否するため、署名して
+// 取りに行く。
+func fetchObject(ctx context.Context, uri string) (*activitystream.Object, error) {
+	if !isFetchableURI(uri) {
+		return nil, fmt.Errorf("refusing to fetch %v", uri)
+	}
 	resp, err := signer.GetWithSign(ctx, uri)
 	if err != nil {
-		return nil, fmt.Errorf("fetching actor %v failed: %w", uri, err)
+		return nil, fmt.Errorf("fetching %v failed: %w", uri, err)
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("fetching actor %v returned %v", uri, resp.Status)
+		return nil, fmt.Errorf("fetching %v returned %v", uri, resp.Status)
 	}
-	actor := &activitystream.Object{}
-	if err := json.NewDecoder(resp.Body).Decode(actor); err != nil {
-		return nil, fmt.Errorf("decoding actor %v failed: %w", uri, err)
+	obj := &activitystream.Object{}
+	if err := json.NewDecoder(io.LimitReader(resp.Body, maxRemoteBody)).Decode(obj); err != nil {
+		return nil, fmt.Errorf("decoding %v failed: %w", uri, err)
 	}
-	return actor, nil
+	return obj, nil
+}
+
+// fetchActor はリモートの actor を取得する。
+func fetchActor(ctx context.Context, uri string) (*activitystream.Object, error) {
+	return fetchObject(ctx, uri)
+}
+
+// isFetchableURI は取得しに行ってよい URI かを返す。
+//
+// ブーストされた投稿のように、リモートが指定した URI をこちらから引く経路が
+// ある。そこに内部アドレスを書かれると、外から到達できないものを代わりに
+// 取らせられる。ホスト名で内部を指す DNS までは追えないが、IP 直打ちと
+// localhost は弾く。まともな実装はホスト名で連合する。
+func isFetchableURI(uri string) bool {
+	u, err := url.Parse(uri)
+	if err != nil || u.Host == "" {
+		return false
+	}
+	if u.Scheme != "https" && u.Scheme != "http" {
+		return false
+	}
+	// ローカル検証は localhost 相手に行うため、開発時は制限しない。
+	if config.IsDevelopment() {
+		return true
+	}
+	host := u.Hostname()
+	if net.ParseIP(host) != nil {
+		return false
+	}
+	return !strings.EqualFold(host, "localhost")
 }
 
 // actorInfoTTL は表示名とアイコンのキャッシュの寿命。改名や画像の差し替えに
