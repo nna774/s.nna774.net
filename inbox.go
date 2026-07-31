@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"strings"
 	"time"
 
 	"github.com/nna774/s.nna774.net/activitystream"
@@ -103,10 +102,16 @@ func dispatchInbox(w http.ResponseWriter, r *http.Request, in *activitystream.Ob
 	return nil
 }
 
-// announceHandler はブースト。タイムラインに載せる。
+// announceHandler はブースト。タイムラインに載せ、自分の投稿が
+// ブーストされたときは通知にも積む。
 func announceHandler(w http.ResponseWriter, r *http.Request, in *activitystream.Object) httperror.HttpError {
-	if err := appendToTimeline(r.Context(), in); err != nil {
+	ctx := r.Context()
+	if err := appendToTimeline(ctx, in); err != nil {
 		return httperror.StatusInternalServerError("cannot save the Announce", err)
+	}
+	if isMyStatus(in.Object.ID()) {
+		notifyOrLog(ctx, in)
+		logf("%v boosted %v", in.Actor.ID(), in.Object.ID())
 	}
 	respondText(w, http.StatusAccepted, "accepted\n")
 	return nil
@@ -117,7 +122,7 @@ func likeHandler(w http.ResponseWriter, r *http.Request, in *activitystream.Obje
 	ctx := r.Context()
 	target := in.Object.ID()
 	actorID := in.Actor.ID()
-	if !strings.HasPrefix(target, Config.ID()+"/status/") {
+	if !isMyStatus(target) {
 		logf("inbox: ignoring Like of %v (not ours)", target)
 		respondText(w, http.StatusAccepted, "accepted\n")
 		return nil
@@ -129,6 +134,7 @@ func likeHandler(w http.ResponseWriter, r *http.Request, in *activitystream.Obje
 	}); err != nil {
 		return httperror.StatusInternalServerError("cannot record the Like", err)
 	}
+	notifyOrLog(ctx, in)
 	logf("%v liked %v", actorID, target)
 	respondText(w, http.StatusAccepted, "accepted\n")
 	return nil
@@ -278,20 +284,26 @@ func followHandler(w http.ResponseWriter, r *http.Request, in *activitystream.Ob
 		return httperror.StatusUnprocessableEntity(fmt.Sprintf("actor %v advertises no inbox", actorID), nil)
 	}
 
+	// AutoAcceptFollow が false のときは保留する。手動で Accept するまで
+	// フォロワーには数えない。
+	//
+	// Accept を送る前に永続化する。逆順だと、Accept は届いたのに
+	// フォロワーとして記録されていない状態が起こり得る。
+	state := datastore.FollowStateAccepted
 	if !Config.AutoAcceptFollow {
-		// 保留する。手動で Accept するまでフォロワーには数えない。
-		if err := saveFollower(ctx, datastore.KVFollowers, actor, in.ID, datastore.FollowStatePending); err != nil {
-			return httperror.StatusInternalServerError("cannot record the follow request", err)
-		}
+		state = datastore.FollowStatePending
+	}
+	if err := saveFollower(ctx, datastore.KVFollowers, actor, in.ID, state); err != nil {
+		return httperror.StatusInternalServerError("cannot record the follower", err)
+	}
+	// 保留・受理どちらでも通知に積む。保留中の要求はフォロワー数にも
+	// コレクションにも出てこないため、通知が唯一の気付く手段になる。
+	notifyOrLog(ctx, in)
+
+	if !Config.AutoAcceptFollow {
 		logf("follow request from %v is pending", actorID)
 		respondText(w, http.StatusAccepted, "accepted\n")
 		return nil
-	}
-
-	// Accept を送る前に永続化する。逆順だと、Accept は届いたのに
-	// フォロワーとして記録されていない状態が起こり得る。
-	if err := saveFollower(ctx, datastore.KVFollowers, actor, in.ID, datastore.FollowStateAccepted); err != nil {
-		return httperror.StatusInternalServerError("cannot record the follower", err)
 	}
 
 	// Lambda はレスポンスを返した時点で実行環境を凍結するため、goroutine に
@@ -322,6 +334,22 @@ func undoHandler(w http.ResponseWriter, r *http.Request, in *activitystream.Obje
 			return httperror.StatusInternalServerError("cannot remove the follower", err)
 		}
 		logf("removed follower %v", actorID)
+	case inner != nil && (inner.Type == activitystream.LikeType || inner.Type == activitystream.AnnounceType):
+		// いいね・ブーストの取り消し。ここを無視していたため、取り消された
+		// 後も likes に残り続けていた。
+		//
+		// 他人の分を消させないよう、内側の actor が Undo の actor 本人で
+		// あることを確かめる。Undo(Follow) と同じ理由である。
+		if inner.Actor.ID() != "" && inner.Actor.ID() != actorID {
+			return httperror.StatusUnprocessableEntity(fmt.Sprintf("Undo(%v) actor mismatch", inner.Type), nil)
+		}
+		target := inner.Object.ID()
+		if inner.Type == activitystream.LikeType {
+			if err := client.DeleteKV(ctx, datastore.KVLikes, target+"#"+actorID); err != nil {
+				logf("removing the Like of %v by %v failed: %v", target, actorID, err)
+			}
+		}
+		logf("%v undid their %v on %v", actorID, inner.Type, target)
 	default:
 		innerType := ""
 		if inner != nil {
@@ -376,6 +404,12 @@ func createHandler(w http.ResponseWriter, r *http.Request, in *activitystream.Ob
 	}
 	if err := appendToTimeline(ctx, in); err != nil {
 		return httperror.StatusInternalServerError("cannot save to the timeline", err)
+	}
+	// 自分宛のものだけ通知にする。フォロー相手同士の会話まで通知にすると
+	// タイムラインの写しになって役に立たない。
+	if notifiesMe(in, note) {
+		notifyOrLog(ctx, in)
+		logf("%v mentioned us in %v", in.Actor.ID(), note.ID)
 	}
 	respondText(w, http.StatusAccepted, "accepted\n")
 	return nil
