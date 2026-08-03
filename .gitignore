@@ -3,3 +3,11 @@
 /build/
 
 /*.key
+
+# .claude/ は共有したいものだけ通す
+/.claude/*
+!/.claude/settings.json
+!/.claude/commands/
+!/.claude/agents/
+!/.claude/skills/
+!/.claude/hooks/
