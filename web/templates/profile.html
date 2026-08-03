@@ -8,8 +8,8 @@
     <div class="counts">
       投稿 <b>{{.StatusCount}}</b>
       {{if not .HideCollections}}
-        ・ フォロワー <b>{{.FollowerCount}}</b>
-        ・ フォロー <b>{{.FollowingCount}}</b>
+        ・ <a href="/u/{{.LocalPart}}/followers">フォロワー <b>{{.FollowerCount}}</b></a>
+        ・ <a href="/u/{{.LocalPart}}/following">フォロー <b>{{.FollowingCount}}</b></a>
       {{end}}
     </div>
   </div>

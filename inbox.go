@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"strings"
 	"time"
 
 	"github.com/nna774/s.nna774.net/activitystream"
@@ -103,12 +102,87 @@ func dispatchInbox(w http.ResponseWriter, r *http.Request, in *activitystream.Ob
 	return nil
 }
 
-// announceHandler はブースト。タイムラインに載せる。
+// announceHandler はブースト。他人の投稿のブーストはタイムラインに載せ、
+// 自分の投稿のブーストは通知にする。
 func announceHandler(w http.ResponseWriter, r *http.Request, in *activitystream.Object) httperror.HttpError {
-	if err := appendToTimeline(r.Context(), in); err != nil {
+	ctx := r.Context()
+	target := in.Object.ID()
+
+	if isMyStatus(target) {
+		// 自分の投稿は outbox 経由で既にタイムラインに出ている。ここで
+		// 積むと同じものが二重に並ぶ。通知にだけ出す。
+		notifyOrLog(ctx, in)
+		logf("%v boosted %v", in.Actor.ID(), target)
+		respondText(w, http.StatusAccepted, "accepted\n")
+		return nil
+	}
+
+	announce := *in
+	// 並べ替えに使う時刻。ブーストされた順に並べたいので、元の投稿の
+	// published では代用できない。
+	if announce.Published == "" {
+		announce.Published = nowRFC3339()
+	}
+
+	// Announce の object はほぼ常に文字列 URI で来る。表示のたびにリモートへ
+	// 取りに行かせないよう、受信時に本文を引いて埋め込む。以前はこれを
+	// やっていなかったため、保存はされるのに表示側で Object.Item() が nil に
+	// なり、ブーストが黙って消えていた。
+	if announce.Object.Item() == nil {
+		note, err := boostedNote(ctx, target)
+		if err != nil {
+			// 引けないものはタイムラインに出せない。相手にリトライさせても
+			// 直らないので受け取ったことにして捨てる。
+			logf("inbox: dropping Announce of %v (%v)", target, err)
+			respondText(w, http.StatusAccepted, "accepted\n")
+			return nil
+		}
+		announce.Object = activitystream.ObjectRef(note)
+	}
+	// 元の投稿の著者はフォロー関係にないことが多い。名前とアイコンを控える。
+	if note := announce.Object.Item(); note != nil {
+		cacheActorInfo(ctx, note.AttributedTo.ID())
+	}
+
+	if err := appendToTimeline(ctx, &announce); err != nil {
 		return httperror.StatusInternalServerError("cannot save the Announce", err)
 	}
+	logf("%v boosted %v", in.Actor.ID(), target)
 	respondText(w, http.StatusAccepted, "accepted\n")
+	return nil
+}
+
+// boostedNote はブーストされた投稿を引いて中身を確かめる。
+func boostedNote(ctx context.Context, uri string) (*activitystream.Object, error) {
+	note, err := fetchObject(ctx, uri)
+	if err != nil {
+		return nil, err
+	}
+	if err := verifyBoostedNote(note, uri); err != nil {
+		return nil, err
+	}
+	return note, nil
+}
+
+// verifyBoostedNote は引いた投稿が本当にその URI のものかを確かめる。
+//
+// id が違うものを返されたら、タイムラインに全く別の投稿を並べられる。著者の
+// オリジンが投稿のオリジンと一致することも見る。これを見ないと、あるサーバが
+// 「別のサーバの誰かが書いた」と称する投稿を流し込める。
+func verifyBoostedNote(note *activitystream.Object, uri string) error {
+	if note.ID != uri {
+		return fmt.Errorf("%v returned an object whose id is %v", uri, note.ID)
+	}
+	if note.Content == "" {
+		return fmt.Errorf("%v has no content", uri)
+	}
+	author := note.AttributedTo.ID()
+	if author == "" {
+		return fmt.Errorf("%v has no attributedTo", uri)
+	}
+	if !sameOrigin(note.ID, author) {
+		return fmt.Errorf("%v claims to be written by %v", uri, author)
+	}
 	return nil
 }
 
@@ -117,7 +191,7 @@ func likeHandler(w http.ResponseWriter, r *http.Request, in *activitystream.Obje
 	ctx := r.Context()
 	target := in.Object.ID()
 	actorID := in.Actor.ID()
-	if !strings.HasPrefix(target, Config.ID()+"/status/") {
+	if !isMyStatus(target) {
 		logf("inbox: ignoring Like of %v (not ours)", target)
 		respondText(w, http.StatusAccepted, "accepted\n")
 		return nil
@@ -129,6 +203,7 @@ func likeHandler(w http.ResponseWriter, r *http.Request, in *activitystream.Obje
 	}); err != nil {
 		return httperror.StatusInternalServerError("cannot record the Like", err)
 	}
+	notifyOrLog(ctx, in)
 	logf("%v liked %v", actorID, target)
 	respondText(w, http.StatusAccepted, "accepted\n")
 	return nil
@@ -156,8 +231,19 @@ func deleteHandler(w http.ResponseWriter, r *http.Request, in *activitystream.Ob
 	}
 
 	if target != "" {
+		// 通知に載っているかを先に見る。タイムラインから外すのが先だと、
+		// 通知の判定に使う元の Create を消してしまう実装に変えたときに
+		// 静かに判定できなくなる。
+		notify := notifiedObject(ctx, target)
 		if err := removeFromTimeline(ctx, target); err != nil {
 			logf("removing %v from the timeline failed: %v", target, err)
+		}
+		// 自分宛だった投稿が消されたときだけ通知にする。フォロー相手は
+		// 自分の投稿を消すたびに Delete を全フォロワーに配信するので、
+		// 全部通知にするとノイズにしかならない。
+		if notify {
+			notifyOrLog(ctx, in)
+			logf("%v deleted %v", in.Actor.ID(), target)
 		}
 	}
 	respondText(w, http.StatusAccepted, "accepted\n")
@@ -278,20 +364,26 @@ func followHandler(w http.ResponseWriter, r *http.Request, in *activitystream.Ob
 		return httperror.StatusUnprocessableEntity(fmt.Sprintf("actor %v advertises no inbox", actorID), nil)
 	}
 
+	// AutoAcceptFollow が false のときは保留する。手動で Accept するまで
+	// フォロワーには数えない。
+	//
+	// Accept を送る前に永続化する。逆順だと、Accept は届いたのに
+	// フォロワーとして記録されていない状態が起こり得る。
+	state := datastore.FollowStateAccepted
 	if !Config.AutoAcceptFollow {
-		// 保留する。手動で Accept するまでフォロワーには数えない。
-		if err := saveFollower(ctx, datastore.KVFollowers, actor, in.ID, datastore.FollowStatePending); err != nil {
-			return httperror.StatusInternalServerError("cannot record the follow request", err)
-		}
+		state = datastore.FollowStatePending
+	}
+	if err := saveFollower(ctx, datastore.KVFollowers, actor, in.ID, state); err != nil {
+		return httperror.StatusInternalServerError("cannot record the follower", err)
+	}
+	// 保留・受理どちらでも通知に積む。保留中の要求はフォロワー数にも
+	// コレクションにも出てこないため、通知が唯一の気付く手段になる。
+	notifyOrLog(ctx, in)
+
+	if !Config.AutoAcceptFollow {
 		logf("follow request from %v is pending", actorID)
 		respondText(w, http.StatusAccepted, "accepted\n")
 		return nil
-	}
-
-	// Accept を送る前に永続化する。逆順だと、Accept は届いたのに
-	// フォロワーとして記録されていない状態が起こり得る。
-	if err := saveFollower(ctx, datastore.KVFollowers, actor, in.ID, datastore.FollowStateAccepted); err != nil {
-		return httperror.StatusInternalServerError("cannot record the follower", err)
 	}
 
 	// Lambda はレスポンスを返した時点で実行環境を凍結するため、goroutine に
@@ -322,6 +414,26 @@ func undoHandler(w http.ResponseWriter, r *http.Request, in *activitystream.Obje
 			return httperror.StatusInternalServerError("cannot remove the follower", err)
 		}
 		logf("removed follower %v", actorID)
+	case inner != nil && (inner.Type == activitystream.LikeType || inner.Type == activitystream.AnnounceType):
+		// いいね・ブーストの取り消し。ここを無視していたため、取り消された
+		// 後も likes に残り続けていた。
+		//
+		// 他人の分を消させないよう、内側の actor が Undo の actor 本人で
+		// あることを確かめる。Undo(Follow) と同じ理由である。
+		if inner.Actor.ID() != "" && inner.Actor.ID() != actorID {
+			return httperror.StatusUnprocessableEntity(fmt.Sprintf("Undo(%v) actor mismatch", inner.Type), nil)
+		}
+		target := inner.Object.ID()
+		if inner.Type == activitystream.LikeType {
+			if err := client.DeleteKV(ctx, datastore.KVLikes, target+"#"+actorID); err != nil {
+				logf("removing the Like of %v by %v failed: %v", target, actorID, err)
+			}
+		}
+		// 取り消し自体を出来事として積む。元の通知を消す実装にすると、
+		// 見る前に取り消された場合に「いいねが付いて取り消された」ことに
+		// 気付く手段が無くなる。likes は現在の状態なので消すのが正しい。
+		notifyOrLog(ctx, in)
+		logf("%v undid their %v on %v", actorID, inner.Type, target)
 	default:
 		innerType := ""
 		if inner != nil {
@@ -376,6 +488,12 @@ func createHandler(w http.ResponseWriter, r *http.Request, in *activitystream.Ob
 	}
 	if err := appendToTimeline(ctx, in); err != nil {
 		return httperror.StatusInternalServerError("cannot save to the timeline", err)
+	}
+	// 自分宛のものだけ通知にする。フォロー相手同士の会話まで通知にすると
+	// タイムラインの写しになって役に立たない。
+	if notifiesMe(in, note) {
+		notifyOrLog(ctx, in)
+		logf("%v mentioned us in %v", in.Actor.ID(), note.ID)
 	}
 	respondText(w, http.StatusAccepted, "accepted\n")
 	return nil

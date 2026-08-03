@@ -13,7 +13,7 @@
     </select>
     <input type="text" name="mentions" placeholder="メンション先の actor URI (空白区切り)"
            value="{{.MentionPrefill}}">
-    <button type="submit" class="primary">投稿</button>
+    <button type="submit" class="primary" title="Cmd-Enter (Ctrl-Enter) でも投稿できる">投稿</button>
   </div>
 </form>
 
@@ -28,6 +28,9 @@
 {{if .Items}}
   {{range .Items}}
     <article>
+      {{if .BoostedByURI}}
+        <div class="boosted"><a href="{{.BoostedByURI}}">{{.BoostedByName}}</a> がブースト</div>
+      {{end}}
       <div class="who">
         {{if .IconURL}}<img src="{{.IconURL}}" alt="">{{end}}
         <span class="name">{{.AuthorName}}</span>

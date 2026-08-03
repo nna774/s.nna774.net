@@ -44,6 +44,14 @@ select, button { font: inherit; padding: .4rem .6rem; border-radius: .25rem; bor
   background: var(--bg); color: var(--fg); }
 button { cursor: pointer; }
 button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+.badge { display: inline-block; margin-left: .25rem; padding: 0 .35rem; border-radius: .7rem;
+  background: var(--accent); color: #fff; font-size: .75rem; line-height: 1.4; }
+article.notice .kind { color: var(--fg); }
+article.notice.unread { border-left: 3px solid var(--accent); padding-left: .75rem; }
+article.notice .target { font-size: .9rem; color: var(--dim); border-left: 2px solid var(--line);
+  padding-left: .6rem; overflow-wrap: anywhere; }
+article.notice .target.gone { text-decoration: line-through; }
+article .boosted { font-size: .8rem; color: var(--dim); margin-bottom: .25rem; }
 .reply-to { font-size: .85rem; color: var(--dim); margin-bottom: .5rem; }
 .empty { color: var(--dim); text-align: center; padding: 3rem 0; }
 .error { color: #c0392b; }
@@ -59,6 +67,7 @@ footer.site { margin-top: 3rem; padding-top: 1rem; border-top: 1px solid var(--l
   <nav>
     {{if .Authed}}
       <a href="/timeline">タイムライン</a>
+      <a href="/notifications">通知{{if .UnreadCount}}<span class="badge">{{.UnreadCount}}</span>{{end}}</a>
       <form method="post" action="/logout" style="display:inline">
         <button type="submit">ログアウト</button>
       </form>
@@ -71,6 +80,16 @@ footer.site { margin-top: 3rem; padding-top: 1rem; border-top: 1px solid var(--l
 <footer class="site">
   <a href="{{.Origin}}/u/{{.LocalPart}}">{{.Handle}}</a> — ActivityPub
 </footer>
+<script>
+// テキストエリアで Cmd-Enter (Ctrl-Enter) を押したら、そのフォームを送信する。
+document.addEventListener('keydown', function (e) {
+  if (e.key !== 'Enter' || !(e.metaKey || e.ctrlKey) || e.isComposing) return;
+  var el = e.target;
+  if (!(el instanceof HTMLTextAreaElement) || !el.form) return;
+  e.preventDefault();
+  el.form.requestSubmit();
+});
+</script>
 </body>
 </html>{{end}}
 
