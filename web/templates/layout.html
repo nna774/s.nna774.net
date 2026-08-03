@@ -85,6 +85,16 @@ footer.site { margin-top: 3rem; padding-top: 1rem; border-top: 1px solid var(--l
 <footer class="site">
   <a href="{{.Origin}}/u/{{.LocalPart}}">{{.Handle}}</a> — ActivityPub
 </footer>
+<script>
+// テキストエリアで Cmd-Enter (Ctrl-Enter) を押したら、そのフォームを送信する。
+document.addEventListener('keydown', function (e) {
+  if (e.key !== 'Enter' || !(e.metaKey || e.ctrlKey) || e.isComposing) return;
+  var el = e.target;
+  if (!(el instanceof HTMLTextAreaElement) || !el.form) return;
+  e.preventDefault();
+  el.form.requestSubmit();
+});
+</script>
 </body>
 </html>{{end}}
 
