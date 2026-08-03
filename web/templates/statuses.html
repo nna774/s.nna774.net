@@ -1,0 +1,23 @@
+{{define "content"}}
+<h2 class="page-title">{{.SiteName}} の投稿</h2>
+
+{{if .Statuses}}
+  {{range .Statuses}}
+    <article>
+      {{with .InReplyTo}}<div class="reply-to">返信: <a href="{{.}}">{{.}}</a></div>{{end}}
+      <div class="body">{{sanitize .Content}}</div>
+      <div class="meta">
+        <a href="/u/{{$.LocalPart}}/status/{{.StatusID}}">{{datetime .Published}}</a>
+      </div>
+    </article>
+  {{end}}
+{{else}}
+  <p class="empty">このページに投稿は無い。</p>
+{{end}}
+
+<nav class="pager">
+  {{if .HasPrev}}<a href="/u/{{.LocalPart}}/status?page={{.PrevPage}}">← 新しい</a>{{end}}
+  <span>{{.Page}} ページ目</span>
+  {{if .HasNext}}<a href="/u/{{.LocalPart}}/status?page={{.NextPage}}">古い →</a>{{end}}
+</nav>
+{{end}}
