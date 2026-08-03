@@ -10,6 +10,12 @@ name: 久我山菜々
 origin: https://s.nna774.net
 icon_uri: https://nna774.net/img/1012_filtered.jpg
 summary: B95 H108 S102
+# プロフィールに並べる追加情報。Mastodon 系はこれを表として表示する。
+# value が URL のときはリンクになり、リンク先に actor へ戻る rel="me" の
+# リンクがあれば検証済みとして表示される。
+fields:
+  - name: Web
+    value: https://nna774.net/
 # 受け取った Follow を自動で Accept するか。false の場合は pending で
 # 保留し、手動で Accept するまでフォロワーに数えない。
 auto_accept_follow: true

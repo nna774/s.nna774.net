@@ -207,7 +207,7 @@ func TestMarshalDoesNotDropTypeSpecificFields(t *testing.T) {
 			"https://nna774.net/img/a.jpg", "image/jpeg", "nana",
 			"https://s.nna774.net/u/nana/inbox", "https://s.nna774.net/u/nana/outbox",
 			"https://s.nna774.net/u/nana/followers", "https://s.nna774.net/u/nana/following",
-			"summary", "https://s.nna774.net/u/nana#main-key", "PEM",
+			"summary", "https://s.nna774.net/u/nana#main-key", "PEM", nil,
 		)
 		got := marshalToMap(t, actor)
 		for _, k := range []string{"@context", "id", "type", "url", "name", "icon", "preferredUsername", "inbox", "outbox", "followers", "following", "summary", "publicKey"} {
@@ -422,6 +422,67 @@ func TestInboxURIPrefersSharedInbox(t *testing.T) {
 				t.Errorf("InboxURI() = %q, want %q", got, tt.want)
 			}
 		})
+	}
+}
+
+// Mastodon が項目を検証済みとして表示するには、value の中のリンクに
+// rel="me" が入っている必要がある。素の文字列がそのままリンクにされる
+// ことは無い。
+func TestNewPropertyValue(t *testing.T) {
+	tests := []struct {
+		name  string
+		value string
+		want  string
+	}{
+		{"URL はリンクになる", "https://nna774.net/", `<a href="https://nna774.net/" rel="me nofollow noopener" target="_blank">https://nna774.net/</a>`},
+		{"URL でなければそのまま", "1月1日", "1月1日"},
+		{"javascript: はリンクにしない", "javascript:alert(1)", "javascript:alert(1)"},
+		{"HTML はエスケープする", `<script>alert(1)</script>`, `&lt;script&gt;alert(1)&lt;/script&gt;`},
+		{"URL 中の記号もエスケープする", "https://example.com/?a=1&b=2", `<a href="https://example.com/?a=1&amp;b=2" rel="me nofollow noopener" target="_blank">https://example.com/?a=1&amp;b=2</a>`},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := NewPropertyValue("Web", tt.value)
+			if got.Type != PropertyValueType {
+				t.Errorf("type = %q, want %q", got.Type, PropertyValueType)
+			}
+			if got.Name != "Web" {
+				t.Errorf("name = %q, want %q", got.Name, "Web")
+			}
+			if got.Value != tt.want {
+				t.Errorf("value = %q, want %q", got.Value, tt.want)
+			}
+		})
+	}
+}
+
+// attachment は actor の JSON に出ていなければ相手に届かない。
+func TestUserResourceHasAttachment(t *testing.T) {
+	actor := NewUserResource(
+		"https://s.nna774.net/u/nana", "久我山菜々",
+		"https://nna774.net/img/a.jpg", "image/jpeg", "nana",
+		"https://s.nna774.net/u/nana/inbox", "https://s.nna774.net/u/nana/outbox",
+		"https://s.nna774.net/u/nana/followers", "https://s.nna774.net/u/nana/following",
+		"summary", "https://s.nna774.net/u/nana#main-key", "PEM",
+		Objects{NewPropertyValue("Web", "https://nna774.net/")},
+	)
+	got := marshalToMap(t, actor)
+	attachment, ok := got["attachment"].([]interface{})
+	if !ok || len(attachment) != 1 {
+		t.Fatalf("attachment = %v", got["attachment"])
+	}
+	field, _ := attachment[0].(map[string]interface{})
+	if field["type"] != PropertyValueType || field["name"] != "Web" {
+		t.Errorf("attachment[0] = %v", field)
+	}
+	if _, ok := field["value"].(string); !ok {
+		t.Errorf("attachment[0].value = %v", field["value"])
+	}
+	// 項目が無いときに空の attachment を出すと、実装によっては壊れて
+	// 見えるので出さない。
+	bare := NewUserResource("id", "n", "i", "image/jpeg", "n", "in", "out", "fs", "fg", "s", "k", "PEM", nil)
+	if _, ok := marshalToMap(t, bare)["attachment"]; ok {
+		t.Error("attachment should be omitted when there is no field")
 	}
 }
 

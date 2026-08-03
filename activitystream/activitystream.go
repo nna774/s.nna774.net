@@ -5,7 +5,9 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"html"
 	"net/http"
+	"net/url"
 )
 
 const (
@@ -34,9 +36,12 @@ const (
 	OrderedCollectionType     = "OrderedCollection"
 	OrderedCollectionPageType = "OrderedCollectionPage"
 	PersonType                = "Person"
-	RejectType                = "Reject"
-	UndoType                  = "Undo"
-	UpdateType                = "Update"
+	// PropertyValueType は ActivityStreams ではなく schema.org 由来だが、
+	// Mastodon がプロフィールの追加情報の表現に使っているため合わせる。
+	PropertyValueType = "PropertyValue"
+	RejectType        = "Reject"
+	UndoType          = "Undo"
+	UpdateType        = "Update"
 )
 
 // Ref は ActivityPub の「文字列 URI または埋め込みオブジェクト」を表す。
@@ -171,8 +176,11 @@ type Object struct {
 	To Strings `json:"to,omitempty"`
 	Cc Strings `json:"cc,omitempty"`
 
-	Icon *Object `json:"icon,omitempty"`
-	Tag  Objects `json:"tag,omitempty"`
+	Icon       *Object `json:"icon,omitempty"`
+	Tag        Objects `json:"tag,omitempty"`
+	Attachment Objects `json:"attachment,omitempty"`
+	// Value は ActivityStreams には無いが、PropertyValue が持っている。
+	Value string `json:"value,omitempty"`
 	// Href は ActivityStreams には無いが、Mastodon の tag が持っている。
 	Href string `json:"href,omitempty"`
 
@@ -241,13 +249,38 @@ func FetchActorInfo(ctx context.Context, actor string) (*Object, error) {
 	return &o, nil
 }
 
-func NewUserResource(id string, name string, iconURI string, iconMediaType string, preferredUsername string, inbox string, outbox string, followers string, following string, summary string, keyID string, publicKey string) *Object {
+// propertyValueContext は PropertyValue と value の語彙を定義する。
+// Mastodon は type の名前だけを見ていて @context を読まないが、JSON-LD と
+// して読む実装のために定義しておく。
+var propertyValueContext = map[string]string{
+	"schema":        "http://schema.org#",
+	"PropertyValue": "schema:PropertyValue",
+	"value":         "schema:value",
+}
+
+// NewPropertyValue はプロフィールの追加情報を1項目作る。value が http(s)
+// の URL のときは rel="me" 付きのリンクにする。Mastodon はそのリンク先を
+// 取りに行き、actor へ戻る rel="me" があれば検証済みとして表示する。
+func NewPropertyValue(name string, value string) *Object {
+	v := html.EscapeString(value)
+	if u, err := url.Parse(value); err == nil && (u.Scheme == "https" || u.Scheme == "http") && u.Host != "" {
+		v = `<a href="` + v + `" rel="me nofollow noopener" target="_blank">` + v + `</a>`
+	}
 	return &Object{
-		Context: []string{ContextActivityStreams, ContextSecurityV1},
-		ID:      id,
-		Type:    PersonType,
-		URL:     id,
-		Name:    name,
+		Type:  PropertyValueType,
+		Name:  name,
+		Value: v,
+	}
+}
+
+func NewUserResource(id string, name string, iconURI string, iconMediaType string, preferredUsername string, inbox string, outbox string, followers string, following string, summary string, keyID string, publicKey string, attachment Objects) *Object {
+	return &Object{
+		Context:    []interface{}{ContextActivityStreams, ContextSecurityV1, propertyValueContext},
+		ID:         id,
+		Type:       PersonType,
+		URL:        id,
+		Name:       name,
+		Attachment: attachment,
 		Icon: &Object{
 			Type:      ImageType,
 			MediaType: iconMediaType,
