@@ -368,8 +368,8 @@ func main() {
 	pub(r, http.MethodGet, "/u/:user/outbox", outboxHandler)
 	pub(r, http.MethodGet, "/u/:user/outbox/page", outboxPageHandler)
 	pub(r, http.MethodGet, "/u/:user/status/:id", statusHandler)
-	pub(r, http.MethodGet, "/u/:user/followers", collectionHandler(datastore.KVFollowers, followersURI))
-	pub(r, http.MethodGet, "/u/:user/following", collectionHandler(datastore.KVFollowing, followingURI))
+	pub(r, http.MethodGet, "/u/:user/followers", collectionHandler(datastore.KVFollowers, followersURI, "フォロワー"))
+	pub(r, http.MethodGet, "/u/:user/following", collectionHandler(datastore.KVFollowing, followingURI, "フォロー中"))
 
 	pub(r, http.MethodGet, "/.well-known/webfinger", webfingerHandler)
 	pub(r, http.MethodGet, "/.well-known/host-meta", hostMetaHandler)

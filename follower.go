@@ -77,26 +77,41 @@ func followerInboxes(ctx context.Context) ([]string, error) {
 	return inboxes, nil
 }
 
-// collectionHandler は followers / following を OrderedCollection として返す。
-// 中身は出さず件数とページへのリンクだけを返す実装もあるが、1人用なので
-// items をそのまま並べる。
-func collectionHandler(partition string, uri func() string) func(http.ResponseWriter, *http.Request) httperror.HttpError {
+// collectionHandler は followers / following を返す。ActivityPub の
+// クライアントには OrderedCollection の JSON を、ブラウザには誰がいるのか
+// 読める HTML の一覧を出し分ける。中身は出さず件数とページへのリンクだけを
+// 返す実装もあるが、1人用なので items をそのまま並べる。
+func collectionHandler(partition string, uri func() string, heading string) func(http.ResponseWriter, *http.Request) httperror.HttpError {
 	return func(w http.ResponseWriter, r *http.Request) httperror.HttpError {
 		ctx := r.Context()
+		// 同じ URI が Accept によって JSON と HTML を返すので、キャッシュに
+		// 混ざらないよう Vary を付ける。
+		w.Header().Set("Vary", "Accept")
 		if Config.HideCollections {
-			// 件数も中身も出さない。totalItems 0 の空コレクションを返す。
-			return respondAsJSON(w, http.StatusOK,
-				activitystream.NewOrderedCollection(uri(), 0, "", ""))
+			// 件数も中身も出さない。連合には totalItems 0 の空コレクション、
+			// ブラウザには空の一覧を返す。
+			if wantsActivityJSON(r) {
+				return respondAsJSON(w, http.StatusOK,
+					activitystream.NewOrderedCollection(uri(), 0, "", ""))
+			}
+			return htmlCollectionHandler(w, r, nil, heading)
 		}
 		items, err := client.QueryKV(ctx, partition)
 		if err != nil {
 			return httperror.StatusInternalServerError("cannot list the collection", err)
 		}
-		ids := make([]string, 0, len(items))
+		accepted := make([]*datastore.KVItem, 0, len(items))
 		for _, it := range items {
 			if it.State != datastore.FollowStateAccepted {
 				continue
 			}
+			accepted = append(accepted, it)
+		}
+		if !wantsActivityJSON(r) {
+			return htmlCollectionHandler(w, r, accepted, heading)
+		}
+		ids := make([]string, 0, len(accepted))
+		for _, it := range accepted {
 			ids = append(ids, it.SK)
 		}
 		return respondAsJSON(w, http.StatusOK, activitystream.NewOrderedCollectionOfIDs(uri(), ids))

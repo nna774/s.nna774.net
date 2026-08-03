@@ -18,7 +18,7 @@ var templateFS embed.FS
 // ページごとに独立したテンプレートセットを作る。各ページが自分の
 // "content" を定義するため、1つのセットに全部入れると名前が衝突する。
 var pages = func() map[string]*template.Template {
-	names := []string{"profile", "status", "timeline", "notifications", "login"}
+	names := []string{"profile", "status", "timeline", "notifications", "login", "collection"}
 	m := make(map[string]*template.Template, len(names))
 	for _, name := range names {
 		m[name] = template.Must(template.New(name).Funcs(funcs).

@@ -114,6 +114,40 @@ func countOrZero(ctx context.Context, partition string) int {
 	return n
 }
 
+// --- フォロワー / フォロー中の一覧 -----------------------------------
+
+type collectionMember struct {
+	Name     string
+	ActorURI string
+	IconURL  string
+}
+
+type collectionPage struct {
+	pageBase
+	Heading string
+	Members []collectionMember
+}
+
+// htmlCollectionHandler はフォロワー / フォロー中を人間向けの一覧にする。
+// 中身は KV に持っている (saveFollower が名前とアイコンを控えている) ので
+// リモートへ取りに行かない。
+func htmlCollectionHandler(w http.ResponseWriter, r *http.Request, items []*datastore.KVItem, heading string) httperror.HttpError {
+	members := make([]collectionMember, 0, len(items))
+	for _, it := range items {
+		members = append(members, collectionMember{
+			Name:     it.Name,
+			ActorURI: it.SK,
+			IconURL:  it.IconURL,
+		})
+	}
+	page := collectionPage{
+		pageBase: newPageBase(r, Config.Name+" — "+heading),
+		Heading:  heading,
+		Members:  members,
+	}
+	return renderPage(w, "collection", page)
+}
+
 // --- 個別投稿 ---------------------------------------------------------
 
 type statusPage struct {

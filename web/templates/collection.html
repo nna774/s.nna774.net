@@ -1,0 +1,22 @@
+{{define "content"}}
+<div class="profile">
+  <div>
+    <h2>{{.Heading}}</h2>
+    <div class="handle"><a href="/u/{{.LocalPart}}">プロフィールへ戻る</a></div>
+  </div>
+</div>
+
+{{if .Members}}
+  {{range .Members}}
+    <article>
+      <div class="who">
+        {{if .IconURL}}<img src="{{.IconURL}}" alt="">{{end}}
+        <a class="name" href="{{.ActorURI}}" rel="nofollow noopener" target="_blank">{{if .Name}}{{.Name}}{{else}}{{acct .ActorURI}}{{end}}</a>
+      </div>
+      <div class="meta">{{acct .ActorURI}}</div>
+    </article>
+  {{end}}
+{{else}}
+  <p class="empty">まだ誰もいない。</p>
+{{end}}
+{{end}}
