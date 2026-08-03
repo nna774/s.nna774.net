@@ -62,6 +62,7 @@ type profilePage struct {
 	FollowerCount   int
 	FollowingCount  int
 	HideCollections bool
+	Fields          activitystream.Objects
 	Statuses        []*activitystream.Object
 }
 
@@ -93,6 +94,7 @@ func htmlUserHandler(w http.ResponseWriter, r *http.Request) httperror.HttpError
 		IconURL:         Config.IconURI,
 		StatusCount:     total,
 		HideCollections: Config.HideCollections,
+		Fields:          profileFields(),
 		Statuses:        notes,
 	}
 	if !Config.HideCollections {
