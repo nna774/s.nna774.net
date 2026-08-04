@@ -359,16 +359,29 @@ func saveToOutbox(ctx context.Context, id int, create *activitystream.Object) er
 	return err
 }
 
+// stripJSONSuffix は URL の .json 拡張子を取り除く middleware。
+// wantsActivityJSON で `.json` 拡張子を判定しているため、URL 自体から削除する必要はないが、
+// httprouter でルーティングパターンの衝突を避けるため、ここで削除してから
+// 実際のハンドラに渡す。
+func stripJSONSuffix(h httperror.HandleFuncWithError) httperror.HandleFuncWithError {
+	return func(w http.ResponseWriter, r *http.Request) httperror.HttpError {
+		if strings.HasSuffix(r.URL.Path, ".json") {
+			r.URL.Path = strings.TrimSuffix(r.URL.Path, ".json")
+		}
+		return h(w, r)
+	}
+}
+
 // pub は認証を掛けないエンドポイントを登録する。連合が依存するものは
 // すべてこちらでなければならない。
 func pub(r *httprouter.Router, method, path string, h httperror.HandleFuncWithError) {
-	r.Handler(method, path, h)
+	r.Handler(method, path, stripJSONSuffix(h))
 }
 
 // priv は認証必須のエンドポイントを登録する。mutating が true のものには
 // CSRF 対策 (Sec-Fetch-Site の検証) も掛かる。
 func priv(r *httprouter.Router, method, path string, mutating bool, h httperror.HandleFuncWithError) {
-	r.Handler(method, path, requireAuth(mutating, h))
+	r.Handler(method, path, requireAuth(mutating, stripJSONSuffix(h)))
 }
 
 // newRouter はルーティングを組み立てる。main から切り出してあるのは、
@@ -381,21 +394,14 @@ func newRouter() *httprouter.Router {
 	// という別系統で守られている。
 	pub(r, http.MethodGet, "/", indexHandler)
 	pub(r, http.MethodGet, "/u/:user", userHandler)
-	pub(r, http.MethodGet, "/u/:user.json", userHandler)
 	pub(r, http.MethodPost, "/u/:user/inbox", postInboxHandler)
 	pub(r, http.MethodGet, "/u/:user/outbox", outboxHandler)
-	pub(r, http.MethodGet, "/u/:user/outbox.json", outboxHandler)
 	pub(r, http.MethodGet, "/u/:user/outbox/page", outboxPageHandler)
-	pub(r, http.MethodGet, "/u/:user/outbox/page.json", outboxPageHandler)
 	pub(r, http.MethodGet, "/u/:user/status", statusesHandler)
 	pub(r, http.MethodGet, "/u/:user/status/:id", statusHandler)
-	pub(r, http.MethodGet, "/u/:user/status/:id.json", statusHandler)
 	pub(r, http.MethodGet, "/u/:user/followers", collectionHandler(datastore.KVFollowers, followersURI, "フォロワー"))
-	pub(r, http.MethodGet, "/u/:user/followers.json", collectionHandler(datastore.KVFollowers, followersURI, "フォロワー"))
 	pub(r, http.MethodGet, "/u/:user/following", collectionHandler(datastore.KVFollowing, followingURI, "フォロー中"))
-	pub(r, http.MethodGet, "/u/:user/following.json", collectionHandler(datastore.KVFollowing, followingURI, "フォロー中"))
 	pub(r, http.MethodGet, "/u/:user/favorites", favoritesHandler)
-	pub(r, http.MethodGet, "/u/:user/favorites.json", favoritesHandler)
 
 	pub(r, http.MethodGet, "/.well-known/webfinger", webfingerHandler)
 	pub(r, http.MethodGet, "/.well-known/host-meta", hostMetaHandler)
