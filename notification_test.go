@@ -109,8 +109,9 @@ func TestNotificationsPageRenders(t *testing.T) {
 		`class="target gone"`,
 		// 未読の印とヘッダのバッジ。
 		`class="notice unread"`, `class="badge"`,
-		// 返信フォームとフォロー返しのリンク先。
-		"/timeline?in_reply_to=", "/u/nana/following",
+		// 返信フォームとフォロー返しボタン（画面遷移せず JS で叩く）。
+		// html/template の JS エスケープで "/" は "\/" になる。
+		"/timeline?in_reply_to=", `followBack(event, 'https:\/\/pawoo.net\/users\/someone', 'nana')`,
 	} {
 		if !strings.Contains(got, want) {
 			t.Errorf("rendered page does not contain %q", want)

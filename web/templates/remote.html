@@ -23,16 +23,13 @@
     </div>
   </div>
 
-  <p>
+  <p id="follow-status">
     {{if .Following}}
       フォロー中 ・ <a href="#" onclick="unfollowActor(event, '{{.ActorURI}}', '{{.LocalPart}}')">フォロー解除</a>
     {{else if .FollowPending}}
       フォロー申請中 ・ <a href="#" onclick="unfollowActor(event, '{{.ActorURI}}', '{{.LocalPart}}')">取り消す</a>
     {{else}}
-      <form method="post" action="/u/{{.LocalPart}}/following" style="display:inline">
-        <input type="hidden" name="actor" value="{{.ActorURI}}">
-        <button type="submit" class="primary">フォロー</button>
-      </form>
+      <button type="button" class="primary" onclick="followActor(event, '{{.ActorURI}}', '{{.LocalPart}}')">フォロー</button>
     {{end}}
   </p>
 

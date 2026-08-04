@@ -110,12 +110,67 @@ function deleteStatus(e, statusId, localPart) {
     .catch(() => alert('削除に失敗しました'));
 }
 
+function followActor(e, actorURI, localPart) {
+  e.preventDefault();
+  fetch('/u/' + localPart + '/following', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ actor: actorURI }),
+  })
+    .then(r => r.ok ? renderFollowStatus('pending', actorURI, localPart) : alert('フォロー申請に失敗しました'))
+    .catch(() => alert('フォロー申請に失敗しました'));
+}
+
+// 通知一覧の「フォローを返す」。同じページに複数の通知が並ぶので
+// #follow-status のような単一 id には頼れず、押されたボタン自体を
+// 差し替える。
+function followBack(e, actorURI, localPart) {
+  e.preventDefault();
+  var btn = e.currentTarget;
+  fetch('/u/' + localPart + '/following', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ actor: actorURI }),
+  })
+    .then(r => {
+      if (!r.ok) throw new Error();
+      var span = document.createElement('span');
+      span.textContent = 'フォロー申請中';
+      btn.replaceWith(span);
+    })
+    .catch(() => alert('フォロー申請に失敗しました'));
+}
+
 function unfollowActor(e, actorURI, localPart) {
   e.preventDefault();
   if (!confirm('フォローを解除する。よいか')) return;
   fetch('/u/' + localPart + '/following?actor=' + encodeURIComponent(actorURI), { method: 'DELETE' })
-    .then(r => r.ok ? location.reload() : alert('フォロー解除に失敗しました'))
+    .then(r => r.ok ? renderFollowStatus('none', actorURI, localPart) : alert('フォロー解除に失敗しました'))
     .catch(() => alert('フォロー解除に失敗しました'));
+}
+
+// /remote の #follow-status の中身を、画面遷移せずにボタンの状態だけ
+// 差し替える。innerHTML への文字列連結は actorURI (外部 actor 由来) を
+// 埋め込むことになり XSS の危険があるため、必ず DOM API で組み立てる。
+function renderFollowStatus(state, actorURI, localPart) {
+  var el = document.getElementById('follow-status');
+  if (!el) return;
+  el.textContent = '';
+  if (state === 'none') {
+    var btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'primary';
+    btn.textContent = 'フォロー';
+    btn.addEventListener('click', function (e) { followActor(e, actorURI, localPart); });
+    el.appendChild(btn);
+    return;
+  }
+  el.appendChild(document.createTextNode('フォロー申請中 ・ '));
+  var undo = document.createElement('a');
+  undo.href = '#';
+  undo.textContent = '取り消す';
+  undo.addEventListener('click', function (e) { unfollowActor(e, actorURI, localPart); });
+  el.appendChild(undo);
 }
 
 function postReaction(path, object, actor) {

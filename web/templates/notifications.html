@@ -29,10 +29,7 @@
           <span>{{datetime .Published}}</span>
         {{end}}
         {{if eq .Kind "follow"}}
-          <form method="post" action="/u/{{$.LocalPart}}/following">
-            <input type="hidden" name="actor" value="{{.ActorURI}}">
-            <button type="submit">フォローを返す</button>
-          </form>
+          <button type="button" onclick="followBack(event, '{{.ActorURI}}', '{{$.LocalPart}}')">フォローを返す</button>
         {{end}}
       </div>
     </article>
