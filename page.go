@@ -309,14 +309,55 @@ func stripTags(s string) string {
 
 // --- タイムライン -----------------------------------------------------
 
+// attachmentItem はタイムラインに出す添付メディア1件分。
+type attachmentItem struct {
+	URL  string
+	Name string
+	// Kind は "image" / "video" / "other"。テンプレート側で分岐しやすい
+	// ように mediaType から先に判定しておく。
+	Kind string
+}
+
+// noteAttachments は note.Attachment のうち URL を持つものだけを表示用に
+// 落とす。
+func noteAttachments(note *activitystream.Object) []attachmentItem {
+	if len(note.Attachment) == 0 {
+		return nil
+	}
+	items := make([]attachmentItem, 0, len(note.Attachment))
+	for _, a := range note.Attachment {
+		if a.URL == "" {
+			continue
+		}
+		items = append(items, attachmentItem{
+			URL:  a.URL,
+			Name: a.Name,
+			Kind: attachmentKind(a.MediaType),
+		})
+	}
+	return items
+}
+
+func attachmentKind(mediaType string) string {
+	switch {
+	case strings.HasPrefix(mediaType, "image/"):
+		return "image"
+	case strings.HasPrefix(mediaType, "video/"):
+		return "video"
+	default:
+		return "other"
+	}
+}
+
 type timelineItem struct {
-	AuthorName string
-	AuthorURI  string
-	IconURL    string
-	Content    string
-	Published  string
-	ObjectURI  string
-	InReplyTo  string
+	AuthorName  string
+	AuthorURI   string
+	IconURL     string
+	Content     string
+	Attachments []attachmentItem
+	Published   string
+	ObjectURI   string
+	InReplyTo   string
 	// Mine は自分の投稿かどうか。削除ボタンの出し分けに使う。
 	Mine bool
 	// StatusID は自分の投稿のときだけ入る。削除フォームに使う。
@@ -386,13 +427,14 @@ func timelineHandler(w http.ResponseWriter, r *http.Request) httperror.HttpError
 
 		isMine := actorURI == Config.ID()
 		item := timelineItem{
-			AuthorURI: actorURI,
-			Content:   note.Content,
-			Published: published,
-			ObjectURI: note.ID,
-			InReplyTo: note.InReplyTo.ID(),
-			Mine:      isMine,
-			sortKey:   publishedTime(published),
+			AuthorURI:   actorURI,
+			Content:     note.Content,
+			Attachments: noteAttachments(note),
+			Published:   published,
+			ObjectURI:   note.ID,
+			InReplyTo:   note.InReplyTo.ID(),
+			Mine:        isMine,
+			sortKey:     publishedTime(published),
 		}
 		// authorName / cachedIconURL は自分の分も設定から返す。
 		item.AuthorName = authorName(ctx, actorURI)

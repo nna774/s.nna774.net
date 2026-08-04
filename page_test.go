@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/nna774/s.nna774.net/activitystream"
 	"github.com/nna774/s.nna774.net/datastore"
 	"github.com/nna774/s.nna774.net/web"
 )
@@ -141,6 +142,70 @@ func TestStatusesPageRender(t *testing.T) {
 		"/u/nana/status?page=1",
 		"/u/nana/status?page=3",
 		"こんにちは",
+	} {
+		if !strings.Contains(html, want) {
+			t.Errorf("rendered page does not contain %q", want)
+		}
+	}
+}
+
+func TestNoteAttachments(t *testing.T) {
+	note := &activitystream.Object{
+		Attachment: activitystream.Objects{
+			{URL: "https://example.com/a.png", MediaType: "image/png", Name: "猫"},
+			{URL: "https://example.com/a.mp4", MediaType: "video/mp4"},
+			{URL: "https://example.com/a.pdf", MediaType: "application/pdf"},
+			// url を持たない attachment (プロフィール項目などに紛れ込んだ場合)
+			// は無視する。
+			{Name: "url無し"},
+		},
+	}
+	got := noteAttachments(note)
+	want := []attachmentItem{
+		{URL: "https://example.com/a.png", Name: "猫", Kind: "image"},
+		{URL: "https://example.com/a.mp4", Kind: "video"},
+		{URL: "https://example.com/a.pdf", Kind: "other"},
+	}
+	if len(got) != len(want) {
+		t.Fatalf("noteAttachments() = %#v, want %#v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Errorf("noteAttachments()[%d] = %#v, want %#v", i, got[i], want[i])
+		}
+	}
+}
+
+func TestNoteAttachmentsEmpty(t *testing.T) {
+	if got := noteAttachments(&activitystream.Object{}); got != nil {
+		t.Errorf("noteAttachments() = %#v, want nil", got)
+	}
+}
+
+func TestTimelinePageRenderWithAttachment(t *testing.T) {
+	page := timelinePage{
+		pageBase: pageBase{Title: "タイムライン", SiteName: "nana", LocalPart: "nana", Handle: "@nana"},
+		Items: []timelineItem{{
+			AuthorName: "someone",
+			AuthorURI:  "https://example.com/users/someone",
+			Content:    "<p>写真</p>",
+			Attachments: []attachmentItem{
+				{URL: "https://example.com/a.png", Name: "猫", Kind: "image"},
+				{URL: "https://example.com/a.mp4", Kind: "video"},
+				{URL: "https://example.com/a.pdf", Kind: "other"},
+			},
+			Published: "2026-08-03T12:00:00Z",
+		}},
+	}
+	buf := &bytes.Buffer{}
+	if err := web.Render(buf, "timeline", page); err != nil {
+		t.Fatalf("rendering timeline failed: %v", err)
+	}
+	html := buf.String()
+	for _, want := range []string{
+		`<img src="https://example.com/a.png" alt="猫"`,
+		`<video src="https://example.com/a.mp4" controls>`,
+		`<a href="https://example.com/a.pdf"`,
 	} {
 		if !strings.Contains(html, want) {
 			t.Errorf("rendered page does not contain %q", want)
