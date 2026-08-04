@@ -45,10 +45,7 @@
           <span>{{datetime .Published}}</span>
         {{end}}
         {{if .Mine}}
-          <form method="post" action="/u/{{$.LocalPart}}/statuses/{{.StatusID}}/delete"
-                onsubmit="return confirm('この投稿を削除する。よいか')">
-            <button type="submit">削除</button>
-          </form>
+          <a href="#" onclick="deleteStatus(event, '{{.StatusID}}', '{{$.LocalPart}}')">削除</a>
         {{else}}
           <a href="/timeline?in_reply_to={{.ObjectURI}}&amp;mentions={{.AuthorURI}}">返信</a>
         {{end}}

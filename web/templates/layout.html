@@ -89,6 +89,14 @@ document.addEventListener('keydown', function (e) {
   e.preventDefault();
   el.form.requestSubmit();
 });
+
+function deleteStatus(e, statusId, localPart) {
+  e.preventDefault();
+  if (!confirm('この投稿を削除する。よいか')) return;
+  fetch('/u/' + localPart + '/statuses/' + statusId + '/delete', { method: 'POST' })
+    .then(r => r.ok ? location.reload() : alert('削除に失敗しました'))
+    .catch(() => alert('削除に失敗しました'));
+}
 </script>
 </body>
 </html>{{end}}
