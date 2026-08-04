@@ -146,7 +146,7 @@ func announceHandler(w http.ResponseWriter, r *http.Request, in *activitystream.
 	// やっていなかったため、保存はされるのに表示側で Object.Item() が nil に
 	// なり、ブーストが黙って消えていた。
 	if announce.Object.Item() == nil {
-		note, err := boostedNote(ctx, target)
+		note, err := fetchVerifiedNote(ctx, target)
 		if err != nil {
 			// 引けないものはタイムラインに出せない。相手にリトライさせても
 			// 直らないので受け取ったことにして捨てる。
@@ -170,24 +170,25 @@ func announceHandler(w http.ResponseWriter, r *http.Request, in *activitystream.
 	return nil
 }
 
-// boostedNote はブーストされた投稿を引いて中身を確かめる。
-func boostedNote(ctx context.Context, uri string) (*activitystream.Object, error) {
+// fetchVerifiedNote はある URI の投稿を引いて中身を確かめる。ブーストの
+// 埋め込みだけでなく、いいねした投稿の本文スナップショットにも使う。
+func fetchVerifiedNote(ctx context.Context, uri string) (*activitystream.Object, error) {
 	note, err := fetchObject(ctx, uri)
 	if err != nil {
 		return nil, err
 	}
-	if err := verifyBoostedNote(note, uri); err != nil {
+	if err := verifyFetchedNote(note, uri); err != nil {
 		return nil, err
 	}
 	return note, nil
 }
 
-// verifyBoostedNote は引いた投稿が本当にその URI のものかを確かめる。
+// verifyFetchedNote は引いた投稿が本当にその URI のものかを確かめる。
 //
 // id が違うものを返されたら、タイムラインに全く別の投稿を並べられる。著者の
 // オリジンが投稿のオリジンと一致することも見る。これを見ないと、あるサーバが
 // 「別のサーバの誰かが書いた」と称する投稿を流し込める。
-func verifyBoostedNote(note *activitystream.Object, uri string) error {
+func verifyFetchedNote(note *activitystream.Object, uri string) error {
 	if note.ID != uri {
 		return fmt.Errorf("%v returned an object whose id is %v", uri, note.ID)
 	}

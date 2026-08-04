@@ -98,9 +98,12 @@ type KVItem struct {
 	// Like/Announce の id。Inbox は配信先 (いいねは対象投稿の著者の inbox)。
 	// TargetActor はブーストした投稿の著者 (Undo を直接その inbox にも
 	// 届けるために持つ)。TimelineID は自分のブーストをタイムラインに
-	// 積んだときの連番で、Undo でそこだけ消すのに使う。
+	// 積んだときの連番で、Undo でそこだけ消すのに使う。Content はいいねした
+	// 投稿の本文スナップショット (mylikes のみ)。相手が削除・編集しても
+	// /u/:user/favorites に出せるようにいいね時点のものを控える。
 	TargetActor string `dynamo:"targetActor,omitempty"`
 	TimelineID  int    `dynamo:"timelineID,omitempty"`
+	Content     string `dynamo:"content,omitempty"`
 
 	// TTL は Unix 秒。0 なら期限なし。
 	TTL int64 `dynamo:"ttl,omitempty"`

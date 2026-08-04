@@ -139,6 +139,7 @@ func TestFavoritesPageRenders(t *testing.T) {
 			ObjectURI:  "https://example.com/status/1",
 			AuthorName: "someone",
 			AuthorURI:  "https://example.com/users/someone",
+			Content:    "<p>ないよう</p>",
 			At:         "2026-08-03T12:00:00Z",
 		}},
 	}
@@ -155,6 +156,30 @@ func TestFavoritesPageRenders(t *testing.T) {
 		if !strings.Contains(html, want) {
 			t.Errorf("rendered page does not contain %q", want)
 		}
+	}
+	// 未認証には著者名・アイコン・リンクだけ見せ、本文は出さない。
+	if strings.Contains(html, "ないよう") {
+		t.Error("rendered page shows the post content to an unauthenticated viewer")
+	}
+}
+
+func TestFavoritesPageShowsContentWhenAuthed(t *testing.T) {
+	page := favoritesPage{
+		pageBase: pageBase{Title: "いいね", SiteName: "nana", LocalPart: "nana", Handle: "@nana", Authed: true},
+		Items: []favoriteItem{{
+			ObjectURI:  "https://example.com/status/1",
+			AuthorName: "someone",
+			AuthorURI:  "https://example.com/users/someone",
+			Content:    "<p>ないよう</p>",
+			At:         "2026-08-03T12:00:00Z",
+		}},
+	}
+	buf := &bytes.Buffer{}
+	if err := web.Render(buf, "favorites", page); err != nil {
+		t.Fatalf("rendering favorites failed: %v", err)
+	}
+	if !strings.Contains(buf.String(), "ないよう") {
+		t.Error("rendered page does not show the post content to the authenticated owner")
 	}
 }
 
