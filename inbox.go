@@ -102,6 +102,23 @@ func dispatchInbox(w http.ResponseWriter, r *http.Request, in *activitystream.Ob
 	return nil
 }
 
+// isFollowing はローカルの following レコードに actor があるかを見る。
+func isFollowing(ctx context.Context, actorURI string) bool {
+	_, err := client.GetKV(ctx, datastore.KVFollowing, actorURI)
+	return err == nil
+}
+
+// warnIfNotFollowing はタイムラインに積む相手をフォローしていないときに
+// ログへ残す。フォローを解除したのに Undo の配送が失敗して相手側だけ
+// follow が残る「ゴースト follow」など、想定外の配送経路にログで気付ける
+// ようにする。
+func warnIfNotFollowing(ctx context.Context, kind, actorURI, objectURI string) {
+	if actorURI == "" || isFollowing(ctx, actorURI) {
+		return
+	}
+	logf("inbox: %v from %v, who we are not following (%v)", kind, actorURI, objectURI)
+}
+
 // announceHandler はブースト。他人の投稿のブーストはタイムラインに載せ、
 // 自分の投稿のブーストは通知にする。
 func announceHandler(w http.ResponseWriter, r *http.Request, in *activitystream.Object) httperror.HttpError {
@@ -144,6 +161,7 @@ func announceHandler(w http.ResponseWriter, r *http.Request, in *activitystream.
 		cacheActorInfo(ctx, note.AttributedTo.ID())
 	}
 
+	warnIfNotFollowing(ctx, "Announce", in.Actor.ID(), target)
 	if err := appendToTimeline(ctx, &announce); err != nil {
 		return httperror.StatusInternalServerError("cannot save the Announce", err)
 	}
@@ -486,6 +504,7 @@ func createHandler(w http.ResponseWriter, r *http.Request, in *activitystream.Ob
 	if note == nil {
 		return httperror.StatusUnprocessableEntity("Create has no embedded object", nil)
 	}
+	warnIfNotFollowing(ctx, "Create", in.Actor.ID(), note.ID)
 	if err := appendToTimeline(ctx, in); err != nil {
 		return httperror.StatusInternalServerError("cannot save to the timeline", err)
 	}
