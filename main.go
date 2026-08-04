@@ -141,9 +141,21 @@ func webfingerHandler(w http.ResponseWriter, r *http.Request) httperror.HttpErro
 	return respondJSONWithoutActivityType(w, http.StatusOK, resp)
 }
 
+// profileFields は config の fields を actor の attachment に直す。
+func profileFields() activitystream.Objects {
+	if len(Config.Fields) == 0 {
+		return nil
+	}
+	fields := make(activitystream.Objects, 0, len(Config.Fields))
+	for _, f := range Config.Fields {
+		fields = append(fields, activitystream.NewPropertyValue(f.Name, f.Value))
+	}
+	return fields
+}
+
 func jsonUserHander(w http.ResponseWriter, r *http.Request) httperror.HttpError {
 	resp := activitystream.NewUserResource(
-		Config.ID(), Config.Name, Config.IconURI, Config.IconMediaType(), Config.LocalPart(), inboxURI(), outboxURI(), followersURI(), followingURI(), Config.Summary, mainKeyURI(), Config.PublicKey())
+		Config.ID(), Config.Name, Config.IconURI, Config.IconMediaType(), Config.LocalPart(), inboxURI(), outboxURI(), followersURI(), followingURI(), Config.Summary, mainKeyURI(), Config.PublicKey(), profileFields())
 	return respondAsJSON(w, http.StatusOK, resp)
 }
 
