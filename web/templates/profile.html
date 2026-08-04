@@ -18,6 +18,7 @@
       {{if not .HideCollections}}
         ・ <a href="/u/{{.LocalPart}}/followers">フォロワー <b>{{.FollowerCount}}</b></a>
         ・ <a href="/u/{{.LocalPart}}/following">フォロー <b>{{.FollowingCount}}</b></a>
+        ・ <a href="/u/{{.LocalPart}}/favorites">いいね <b>{{.FavoriteCount}}</b></a>
       {{end}}
     </div>
   </div>
@@ -26,7 +27,10 @@
 {{if .Statuses}}
   {{range .Statuses}}
     <article>
-      {{with .InReplyTo.ID}}<div class="reply-to">返信: <a href="{{.}}">{{.}}</a></div>{{end}}
+      {{if .Boosted}}
+        <div class="boosted"><a href="/remote?actor={{.AuthorURI}}">{{.AuthorName}}</a> の投稿をブースト</div>
+      {{end}}
+      {{with .InReplyTo}}<div class="reply-to">返信: <a href="{{.}}">{{.}}</a></div>{{end}}
       <div class="body">{{sanitize .Content}}</div>
       <div class="meta">
         <a href="{{.URL}}">{{datetime .Published}}</a>

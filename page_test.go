@@ -213,6 +213,42 @@ func TestTimelinePageRenderWithAttachment(t *testing.T) {
 	}
 }
 
+// プロフィールに自分のブーストが「著者名 の投稿をブースト」の形で出ること、
+// 自分の投稿には出ないことを確かめる。
+func TestProfilePageRendersBoosts(t *testing.T) {
+	page := profilePage{
+		pageBase: pageBase{Title: "prof", SiteName: "nana", LocalPart: "nana", Handle: "@nana"},
+		Statuses: []profileStatusItem{
+			{Content: "<p>自分の投稿</p>", URL: "https://s.nna774.net/u/nana/status/1", Published: "2026-08-03T12:00:00Z"},
+			{
+				Content:    "<p>他人の投稿</p>",
+				URL:        "https://example.com/status/1",
+				Published:  "2026-08-03T13:00:00Z",
+				Boosted:    true,
+				AuthorName: "someone",
+				AuthorURI:  "https://example.com/users/someone",
+			},
+		},
+	}
+	buf := &bytes.Buffer{}
+	if err := web.Render(buf, "profile", page); err != nil {
+		t.Fatalf("rendering profile failed: %v", err)
+	}
+	html := buf.String()
+	if strings.Count(html, `<div class="boosted">`) != 1 {
+		t.Errorf("want exactly one boosted marker, got:\n%s", html)
+	}
+	for _, want := range []string{
+		"自分の投稿",
+		"他人の投稿",
+		`href="/remote?actor=https%3a%2f%2fexample.com%2fusers%2fsomeone">someone</a> の投稿をブースト`,
+	} {
+		if !strings.Contains(html, want) {
+			t.Errorf("rendered page does not contain %q", want)
+		}
+	}
+}
+
 // 一覧の /u/:user/status と個別の /u/:user/status/:id は同じ前置きを持つ。
 // httprouter に両方登録できていることを確かめる。
 func TestStatusRoutes(t *testing.T) {

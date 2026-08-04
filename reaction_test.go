@@ -68,7 +68,8 @@ func TestObjectFromQuery(t *testing.T) {
 	}
 }
 
-// like / boost / unlike / unboost のルートが登録されていることを確かめる。
+// like / boost / unlike / unboost / favorites のルートが登録されている
+// ことを確かめる。
 func TestReactionRoutes(t *testing.T) {
 	r := newRouter()
 	cases := []struct {
@@ -79,6 +80,7 @@ func TestReactionRoutes(t *testing.T) {
 		{http.MethodDelete, "/u/nana/likes"},
 		{http.MethodPost, "/u/nana/boosts"},
 		{http.MethodDelete, "/u/nana/boosts"},
+		{http.MethodGet, "/u/nana/favorites"},
 	}
 	for _, c := range cases {
 		h, _, _ := r.Lookup(c.method, c.path)
@@ -127,5 +129,42 @@ func TestTimelinePageRendersReactionButtons(t *testing.T) {
 		if !strings.Contains(html, want) {
 			t.Errorf("rendered page does not contain %q", want)
 		}
+	}
+}
+
+func TestFavoritesPageRenders(t *testing.T) {
+	page := favoritesPage{
+		pageBase: pageBase{Title: "いいね", SiteName: "nana", LocalPart: "nana", Handle: "@nana"},
+		Items: []favoriteItem{{
+			ObjectURI:  "https://example.com/status/1",
+			AuthorName: "someone",
+			AuthorURI:  "https://example.com/users/someone",
+			At:         "2026-08-03T12:00:00Z",
+		}},
+	}
+	buf := &bytes.Buffer{}
+	if err := web.Render(buf, "favorites", page); err != nil {
+		t.Fatalf("rendering favorites failed: %v", err)
+	}
+	html := buf.String()
+	for _, want := range []string{
+		`href="https://example.com/status/1"`,
+		`href="/remote?actor=https%3a%2f%2fexample.com%2fusers%2fsomeone"`,
+		"someone",
+	} {
+		if !strings.Contains(html, want) {
+			t.Errorf("rendered page does not contain %q", want)
+		}
+	}
+}
+
+func TestFavoritesPageRendersEmpty(t *testing.T) {
+	page := favoritesPage{pageBase: pageBase{Title: "いいね", SiteName: "nana", LocalPart: "nana", Handle: "@nana"}}
+	buf := &bytes.Buffer{}
+	if err := web.Render(buf, "favorites", page); err != nil {
+		t.Fatalf("rendering favorites failed: %v", err)
+	}
+	if !strings.Contains(buf.String(), "まだいいねしたものは無い") {
+		t.Error("rendered page does not show the empty state")
 	}
 }

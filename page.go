@@ -64,15 +64,56 @@ type profilePage struct {
 	StatusCount     int
 	FollowerCount   int
 	FollowingCount  int
+	FavoriteCount   int
 	HideCollections bool
 	Fields          activitystream.Objects
-	Statuses        []*activitystream.Object
+	Statuses        []profileStatusItem
 	// HasMore はプロフィールに出し切れなかった投稿があることを示す。
-	// 立っているときだけ投稿一覧へのリンクを出す。
+	// 立っているときだけ投稿一覧へのリンクを出す。自分のブーストは対象外
+	// (投稿一覧ページ自体が自分の Note しか出さないため)。
 	HasMore bool
 }
 
+// profileStatusItem はプロフィールに並べる1件分。自分の投稿とブーストを
+// 混ぜて表示時刻順に並べるため、生の Note ではなくこちらに落とす。
+type profileStatusItem struct {
+	Content   string
+	Published string
+	URL       string
+	InReplyTo string
+	// Boosted / AuthorName / AuthorURI は自分がブーストした他人の投稿の
+	// ときだけ入る。
+	Boosted    bool
+	AuthorName string
+	AuthorURI  string
+	sortKey    time.Time
+}
+
 const profileStatusCount = 20
+
+// profileBoostScanLimit は自分のブーストを拾うために timeline を遡る件数。
+// timeline は全員分のログなので、自分の分だけを拾うのに走査するしかない。
+// 削除やタイムラインの走査上限 (timelineScanLimit) と同じ妥協である。
+const profileBoostScanLimit = 200
+
+// myRecentBoosts は自分がブーストしたものを新しい順に最大 limit 件返す。
+func myRecentBoosts(ctx context.Context, limit int) ([]*activitystream.Object, error) {
+	entries, err := client.TakeObject(ctx, timelineKey, datastore.Inf, profileBoostScanLimit, datastore.Desc)
+	if err != nil && !errors.Is(err, datastore.ErrNotFound) {
+		return nil, err
+	}
+	boosts := make([]*activitystream.Object, 0, limit)
+	for _, act := range entries {
+		if act.Type != activitystream.AnnounceType || act.Actor.ID() != Config.ID() {
+			continue
+		}
+		boosts = append(boosts, act)
+		if len(boosts) >= limit {
+			break
+		}
+	}
+	return boosts, nil
+}
 
 func htmlUserHandler(w http.ResponseWriter, r *http.Request) httperror.HttpError {
 	ctx := r.Context()
@@ -85,12 +126,49 @@ func htmlUserHandler(w http.ResponseWriter, r *http.Request) httperror.HttpError
 	if err != nil {
 		return httperror.StatusInternalServerError("cannot read the outbox", err)
 	}
+	boosts, err := myRecentBoosts(ctx, profileStatusCount)
+	if err != nil {
+		return httperror.StatusInternalServerError("cannot read the boosts", err)
+	}
+
+	items := make([]profileStatusItem, 0, len(creates)+len(boosts))
 	// outbox に入っているのは Create なので、中身の Note を取り出す。
-	notes := make([]*activitystream.Object, 0, len(creates))
 	for _, c := range creates {
-		if note := c.Object.Item(); note != nil {
-			notes = append(notes, note)
+		note := c.Object.Item()
+		if note == nil {
+			continue
 		}
+		items = append(items, profileStatusItem{
+			Content:   note.Content,
+			Published: note.Published,
+			URL:       note.ID,
+			InReplyTo: note.InReplyTo.ID(),
+			sortKey:   publishedTime(note.Published),
+		})
+	}
+	for _, act := range boosts {
+		note := act.Object.Item()
+		if note == nil {
+			continue
+		}
+		items = append(items, profileStatusItem{
+			Content:    note.Content,
+			Published:  act.Published,
+			URL:        note.ID,
+			InReplyTo:  note.InReplyTo.ID(),
+			Boosted:    true,
+			AuthorName: authorName(ctx, note.AttributedTo.ID()),
+			AuthorURI:  note.AttributedTo.ID(),
+			sortKey:    publishedTime(act.Published),
+		})
+	}
+	sort.SliceStable(items, func(i, j int) bool { return items[i].sortKey.After(items[j].sortKey) })
+	// もっと見るリンクの要否は自分の Note の件数だけで決める。投稿一覧
+	// ページ自体が自分の Note しか出さないため、ブーストの分を足すと
+	// 実際には出せない「その先」に誘ってしまう。
+	hasMore := len(creates) >= profileStatusCount
+	if len(items) > profileStatusCount {
+		items = items[:profileStatusCount]
 	}
 
 	page := profilePage{
@@ -101,15 +179,13 @@ func htmlUserHandler(w http.ResponseWriter, r *http.Request) httperror.HttpError
 		StatusCount:     total,
 		HideCollections: Config.HideCollections,
 		Fields:          profileFields(),
-		Statuses:        notes,
-		// 取れるだけ取れたなら、その先にもまだあると見なす。ちょうど
-		// profileStatusCount 件しか無いときに空の一覧へ誘ってしまうが、
-		// そのために全件を数え直すほどのことではない。
-		HasMore: len(notes) >= profileStatusCount,
+		Statuses:        items,
+		HasMore:         hasMore,
 	}
 	if !Config.HideCollections {
 		page.FollowerCount = countOrZero(ctx, datastore.KVFollowers)
 		page.FollowingCount = countOrZero(ctx, datastore.KVFollowing)
+		page.FavoriteCount = countOrZero(ctx, datastore.KVMyLikes)
 	}
 	return renderPage(w, "profile", page)
 }
@@ -250,6 +326,72 @@ func htmlCollectionHandler(w http.ResponseWriter, r *http.Request, items []*data
 		Members:  members,
 	}
 	return renderPage(w, "collection", page)
+}
+
+// --- いいね一覧 ---------------------------------------------------------
+
+func favoritesURI() string { return Config.ID() + "/favorites" }
+
+type favoriteItem struct {
+	ObjectURI  string
+	AuthorName string
+	AuthorURI  string
+	IconURL    string
+	At         string
+}
+
+type favoritesPage struct {
+	pageBase
+	Items []favoriteItem
+}
+
+// favoritesHandler は自分がいいねした投稿の一覧。followers / following と
+// 同じく、ActivityPub の liked コレクションとして JSON でも、人間向けの
+// 一覧としても出す。HideCollections が立っていれば中身を出さない。
+func favoritesHandler(w http.ResponseWriter, r *http.Request) httperror.HttpError {
+	ctx := r.Context()
+	// 同じ URI が Accept によって JSON と HTML を返すので、キャッシュに
+	// 混ざらないよう Vary を付ける。
+	w.Header().Set("Vary", "Accept")
+
+	if Config.HideCollections {
+		if wantsActivityJSON(r) {
+			return respondAsJSON(w, http.StatusOK,
+				activitystream.NewOrderedCollection(favoritesURI(), 0, "", ""))
+		}
+		return renderPage(w, "favorites", favoritesPage{pageBase: newPageBase(r, Config.Name+" — いいね")})
+	}
+
+	items, err := client.QueryKV(ctx, datastore.KVMyLikes)
+	if err != nil {
+		return httperror.StatusInternalServerError("cannot list the favorites", err)
+	}
+	// KV は sk (対象投稿の URI) の辞書順でしか返らないため、いいねした順に
+	// 並べ直す。
+	sort.SliceStable(items, func(i, j int) bool { return items[i].At > items[j].At })
+
+	if wantsActivityJSON(r) {
+		ids := make([]string, 0, len(items))
+		for _, it := range items {
+			ids = append(ids, it.SK)
+		}
+		return respondAsJSON(w, http.StatusOK, activitystream.NewOrderedCollectionOfIDs(favoritesURI(), ids))
+	}
+
+	page := favoritesPage{
+		pageBase: newPageBase(r, Config.Name+" — いいね"),
+		Items:    make([]favoriteItem, 0, len(items)),
+	}
+	for _, it := range items {
+		page.Items = append(page.Items, favoriteItem{
+			ObjectURI:  it.SK,
+			AuthorName: it.Name,
+			AuthorURI:  it.TargetActor,
+			IconURL:    it.IconURL,
+			At:         it.At,
+		})
+	}
+	return renderPage(w, "favorites", page)
 }
 
 // --- 個別投稿 ---------------------------------------------------------
