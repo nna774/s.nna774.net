@@ -68,14 +68,20 @@ func likeRequestHandler(w http.ResponseWriter, r *http.Request) httperror.HttpEr
 	}
 
 	like := activitystream.NewLike(newActivityID("like"), Config.ID(), object)
+	// 表示名とアイコンも一緒に控える。/u/:user/favorites の一覧描画のたびに
+	// 著者をリモートへ取りに行かずに済ませるため。
+	name, iconURL := actorDisplay(actor)
 	// 配信より先に記録する。逆順だと、配信された Like を取り消す手段が
 	// 無くなる。
 	if err := client.PutKV(ctx, &datastore.KVItem{
-		PK:         datastore.KVMyLikes,
-		SK:         object,
-		ActivityID: like.ID,
-		Inbox:      inbox,
-		At:         nowRFC3339(),
+		PK:          datastore.KVMyLikes,
+		SK:          object,
+		ActivityID:  like.ID,
+		Inbox:       inbox,
+		TargetActor: actorURI,
+		Name:        name,
+		IconURL:     iconURL,
+		At:          nowRFC3339(),
 	}); err != nil {
 		return httperror.StatusInternalServerError("cannot record the like", err)
 	}

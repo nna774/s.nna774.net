@@ -64,6 +64,7 @@ type profilePage struct {
 	StatusCount     int
 	FollowerCount   int
 	FollowingCount  int
+	FavoriteCount   int
 	HideCollections bool
 	Fields          activitystream.Objects
 	Statuses        []*activitystream.Object
@@ -110,6 +111,7 @@ func htmlUserHandler(w http.ResponseWriter, r *http.Request) httperror.HttpError
 	if !Config.HideCollections {
 		page.FollowerCount = countOrZero(ctx, datastore.KVFollowers)
 		page.FollowingCount = countOrZero(ctx, datastore.KVFollowing)
+		page.FavoriteCount = countOrZero(ctx, datastore.KVMyLikes)
 	}
 	return renderPage(w, "profile", page)
 }
@@ -250,6 +252,72 @@ func htmlCollectionHandler(w http.ResponseWriter, r *http.Request, items []*data
 		Members:  members,
 	}
 	return renderPage(w, "collection", page)
+}
+
+// --- いいね一覧 ---------------------------------------------------------
+
+func favoritesURI() string { return Config.ID() + "/favorites" }
+
+type favoriteItem struct {
+	ObjectURI  string
+	AuthorName string
+	AuthorURI  string
+	IconURL    string
+	At         string
+}
+
+type favoritesPage struct {
+	pageBase
+	Items []favoriteItem
+}
+
+// favoritesHandler は自分がいいねした投稿の一覧。followers / following と
+// 同じく、ActivityPub の liked コレクションとして JSON でも、人間向けの
+// 一覧としても出す。HideCollections が立っていれば中身を出さない。
+func favoritesHandler(w http.ResponseWriter, r *http.Request) httperror.HttpError {
+	ctx := r.Context()
+	// 同じ URI が Accept によって JSON と HTML を返すので、キャッシュに
+	// 混ざらないよう Vary を付ける。
+	w.Header().Set("Vary", "Accept")
+
+	if Config.HideCollections {
+		if wantsActivityJSON(r) {
+			return respondAsJSON(w, http.StatusOK,
+				activitystream.NewOrderedCollection(favoritesURI(), 0, "", ""))
+		}
+		return renderPage(w, "favorites", favoritesPage{pageBase: newPageBase(r, Config.Name+" — いいね")})
+	}
+
+	items, err := client.QueryKV(ctx, datastore.KVMyLikes)
+	if err != nil {
+		return httperror.StatusInternalServerError("cannot list the favorites", err)
+	}
+	// KV は sk (対象投稿の URI) の辞書順でしか返らないため、いいねした順に
+	// 並べ直す。
+	sort.SliceStable(items, func(i, j int) bool { return items[i].At > items[j].At })
+
+	if wantsActivityJSON(r) {
+		ids := make([]string, 0, len(items))
+		for _, it := range items {
+			ids = append(ids, it.SK)
+		}
+		return respondAsJSON(w, http.StatusOK, activitystream.NewOrderedCollectionOfIDs(favoritesURI(), ids))
+	}
+
+	page := favoritesPage{
+		pageBase: newPageBase(r, Config.Name+" — いいね"),
+		Items:    make([]favoriteItem, 0, len(items)),
+	}
+	for _, it := range items {
+		page.Items = append(page.Items, favoriteItem{
+			ObjectURI:  it.SK,
+			AuthorName: it.Name,
+			AuthorURI:  it.TargetActor,
+			IconURL:    it.IconURL,
+			At:         it.At,
+		})
+	}
+	return renderPage(w, "favorites", page)
 }
 
 // --- 個別投稿 ---------------------------------------------------------

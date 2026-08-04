@@ -156,6 +156,9 @@ func profileFields() activitystream.Objects {
 func jsonUserHander(w http.ResponseWriter, r *http.Request) httperror.HttpError {
 	resp := activitystream.NewUserResource(
 		Config.ID(), Config.Name, Config.IconURI, Config.IconMediaType(), Config.LocalPart(), inboxURI(), outboxURI(), followersURI(), followingURI(), Config.Summary, mainKeyURI(), Config.PublicKey(), profileFields())
+	// followers / following と同じく、中身を出すかは favoritesHandler 側で
+	// HideCollections を見て判断する。URI 自体は常に広告してよい。
+	resp.Liked = favoritesURI()
 	return respondAsJSON(w, http.StatusOK, resp)
 }
 
@@ -381,6 +384,7 @@ func newRouter() *httprouter.Router {
 	pub(r, http.MethodGet, "/u/:user/status/:id", statusHandler)
 	pub(r, http.MethodGet, "/u/:user/followers", collectionHandler(datastore.KVFollowers, followersURI, "フォロワー"))
 	pub(r, http.MethodGet, "/u/:user/following", collectionHandler(datastore.KVFollowing, followingURI, "フォロー中"))
+	pub(r, http.MethodGet, "/u/:user/favorites", favoritesHandler)
 
 	pub(r, http.MethodGet, "/.well-known/webfinger", webfingerHandler)
 	pub(r, http.MethodGet, "/.well-known/host-meta", hostMetaHandler)
