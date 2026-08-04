@@ -282,9 +282,13 @@ func unfollowRequestHandler(w http.ResponseWriter, r *http.Request) httperror.Ht
 	if inbox == "" {
 		inbox = item.SharedInbox
 	}
+	// 配送に失敗したのにローカルの記録だけ消すと、相手には follow が生きた
+	// ままなのにこちらは「解除した」つもりになる。しかも target のレコードが
+	// 無いのでこのハンドラ自体を二度と呼べず、二度と解除できなくなる。
+	// 届くまでローカルの記録を残し、失敗はエラーとして呼び出し元に返す。
 	if inbox != "" {
 		if err := sendToInbox(ctx, inbox, undo); err != nil {
-			logf("Undo(Follow) to %v failed: %v", inbox, err)
+			return httperror.StatusInternalServerError("cannot deliver the Undo(Follow)", err)
 		}
 	}
 	if err := client.DeleteKV(ctx, datastore.KVFollowing, target); err != nil {
