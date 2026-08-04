@@ -361,6 +361,7 @@ func saveToOutbox(ctx context.Context, id int, create *activitystream.Object) er
 
 // stripJSONSuffixHandler は http.Handler レベルで URL の .json 拡張子を除去する。
 // ルーティング前に実行されるため、httprouter で正しくマッチングされるようになる。
+// .json 拡張子がある場合は Accept ヘッダを application/activity+json に設定する。
 type stripJSONSuffixHandler struct {
 	handler http.Handler
 }
@@ -368,6 +369,7 @@ type stripJSONSuffixHandler struct {
 func (h *stripJSONSuffixHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if strings.HasSuffix(r.URL.Path, ".json") {
 		r.URL.Path = strings.TrimSuffix(r.URL.Path, ".json")
+		r.Header.Set("Accept", "application/activity+json")
 	}
 	h.handler.ServeHTTP(w, r)
 }
