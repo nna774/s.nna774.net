@@ -159,6 +159,11 @@ aws ssm put-parameter --region ap-northeast-1 \
 
 秘密鍵は PKCS#1 でも PKCS#8 でも読める。OpenSSL 3 の `genrsa` は PKCS#8 を出す。
 
+login token取得コマンド
+```sh
+aws ssm get-parameter --name /s.nna774.net/api-token --with-decryption --query 'Parameter.Value' --output text --region ap-northeast-1
+```
+
 ### 費用について
 
 DynamoDB は**オンデマンド課金**にしてある。1人用でトラフィックが実質ゼロなので、
