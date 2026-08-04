@@ -1,5 +1,6 @@
 all: dev
 
+GO ?= /usr/local/go/bin/go
 SAM := sam
 REGION := ap-northeast-1
 BUCKET := nana-lambda
@@ -24,7 +25,7 @@ BUILD_DIR := build
 DYNAMODB_LOCAL_ENDPOINT := http://localhost:8000
 
 app:
-	go build -o $(OUT) .
+	$(GO) build -o $(OUT) .
 
 dev: app
 	ENV=development \
@@ -36,12 +37,12 @@ dev: app
 	./$(OUT)
 
 test:
-	go test ./...
+	$(GO) test ./...
 .PHONY: test
 
 lint:
 	gofmt -l .
-	go vet ./...
+	$(GO) vet ./...
 .PHONY: lint
 
 # lambda.norpc は go1.x 時代の net/rpc 経由の呼び出しを落とす。
@@ -52,7 +53,7 @@ lint:
 # 入れてはならない。
 app-for-deploy: clean
 	mkdir -p $(BUILD_DIR)
-	GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go build -tags lambda.norpc -o $(BUILD_DIR)/$(BOOTSTRAP) .
+	GOOS=linux GOARCH=arm64 CGO_ENABLED=0 $(GO) build -tags lambda.norpc -o $(BUILD_DIR)/$(BOOTSTRAP) .
 	cp config.yml $(BUILD_DIR)/config.yml
 .PHONY: app-for-deploy
 
