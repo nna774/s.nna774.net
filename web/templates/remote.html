@@ -1,0 +1,70 @@
+{{define "content"}}
+<form class="compose" method="get" action="/remote">
+  <div class="row">
+    <input type="text" name="actor" value="{{.Query}}"
+           placeholder="見たい相手 (@user@host または actor の URL)" required autofocus>
+    <button type="submit" class="primary">見る</button>
+  </div>
+</form>
+
+{{with .Error}}<p class="error">{{.}}</p>{{end}}
+
+{{if .Found}}
+  <div class="profile">
+    {{if .IconURL}}<img src="{{.IconURL}}" alt="">{{end}}
+    <div>
+      <h2>{{if .Name}}{{.Name}}{{else}}{{acct .ActorURI}}{{end}}</h2>
+      <div class="handle">{{acct .ActorURI}}</div>
+      {{with .Summary}}<div>{{sanitize .}}</div>{{end}}
+      <div class="counts">
+        投稿 <b>{{.StatusCount}}</b>
+        ・ <a href="{{.ActorURI}}" rel="nofollow noopener" target="_blank">元のページ</a>
+      </div>
+    </div>
+  </div>
+
+  <p>
+    {{if .Following}}
+      フォロー中 ・ <a href="#" onclick="unfollowActor(event, '{{.ActorURI}}', '{{.LocalPart}}')">フォロー解除</a>
+    {{else if .FollowPending}}
+      フォロー申請中 ・ <a href="#" onclick="unfollowActor(event, '{{.ActorURI}}', '{{.LocalPart}}')">取り消す</a>
+    {{else}}
+      <form method="post" action="/u/{{.LocalPart}}/following" style="display:inline">
+        <input type="hidden" name="actor" value="{{.ActorURI}}">
+        <button type="submit" class="primary">フォロー</button>
+      </form>
+    {{end}}
+  </p>
+
+  {{if .Statuses}}
+    {{range .Statuses}}
+      <article>
+        {{with .InReplyTo}}<div class="reply-to">返信: <a href="{{.}}">{{.}}</a></div>{{end}}
+        <div class="body">{{sanitize .Content}}</div>
+        {{if .Attachments}}
+          <div class="attachments">
+            {{range .Attachments}}
+              {{if eq .Kind "image"}}
+                <img src="{{.URL}}" alt="{{.Name}}" loading="lazy">
+              {{else if eq .Kind "video"}}
+                <video src="{{.URL}}" controls></video>
+              {{else}}
+                <a href="{{.URL}}" target="_blank" rel="noopener noreferrer">添付ファイル</a>
+              {{end}}
+            {{end}}
+          </div>
+        {{end}}
+        <div class="meta">
+          {{if .ObjectURI}}
+            <a href="{{.ObjectURI}}" rel="nofollow noopener" target="_blank">{{datetime .Published}}</a>
+          {{else}}
+            <span>{{datetime .Published}}</span>
+          {{end}}
+        </div>
+      </article>
+    {{end}}
+  {{else}}
+    <p class="empty">投稿はまだ無い。</p>
+  {{end}}
+{{end}}
+{{end}}

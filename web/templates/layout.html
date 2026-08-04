@@ -79,6 +79,7 @@ footer.site { margin-top: 3rem; padding-top: 1rem; border-top: 1px solid var(--l
     {{if .Authed}}
       <a href="/timeline">タイムライン</a>
       <a href="/notifications">通知{{if .UnreadCount}}<span class="badge">{{.UnreadCount}}</span>{{end}}</a>
+      <a href="/remote">アカウントを見る</a>
       <form method="post" action="/logout" style="display:inline">
         <button type="submit">ログアウト</button>
       </form>
@@ -107,6 +108,14 @@ function deleteStatus(e, statusId, localPart) {
   fetch('/u/' + localPart + '/statuses/' + statusId + '/delete', { method: 'POST' })
     .then(r => r.ok ? location.reload() : alert('削除に失敗しました'))
     .catch(() => alert('削除に失敗しました'));
+}
+
+function unfollowActor(e, actorURI, localPart) {
+  e.preventDefault();
+  if (!confirm('フォローを解除する。よいか')) return;
+  fetch('/u/' + localPart + '/following?actor=' + encodeURIComponent(actorURI), { method: 'DELETE' })
+    .then(r => r.ok ? location.reload() : alert('フォロー解除に失敗しました'))
+    .catch(() => alert('フォロー解除に失敗しました'));
 }
 </script>
 </body>
