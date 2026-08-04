@@ -29,12 +29,17 @@
   {{range .Items}}
     <article>
       {{if .BoostedByURI}}
-        <div class="boosted"><a href="{{.BoostedByURI}}">{{.BoostedByName}}</a> がブースト</div>
+        <div class="boosted"><a href="/remote?actor={{.BoostedByURI}}">{{.BoostedByName}}</a> がブースト</div>
       {{end}}
       <div class="who">
         {{if .IconURL}}<img src="{{.IconURL}}" alt="">{{end}}
-        <span class="name">{{.AuthorName}}</span>
-        <span>{{acct .AuthorURI}}</span>
+        {{if .Mine}}
+          <span class="name">{{.AuthorName}}</span>
+          <span>{{acct .AuthorURI}}</span>
+        {{else}}
+          <a class="name" href="/remote?actor={{.AuthorURI}}">{{.AuthorName}}</a>
+          <a href="/remote?actor={{.AuthorURI}}">{{acct .AuthorURI}}</a>
+        {{end}}
       </div>
       {{with .InReplyTo}}<div class="reply-to">返信: <a href="{{.}}">{{.}}</a></div>{{end}}
       <div class="body">{{sanitize .Content}}</div>

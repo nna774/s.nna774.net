@@ -394,6 +394,7 @@ func newRouter() *httprouter.Router {
 	// --- 私用 (認証必須) ------------------------------------------------
 	priv(r, http.MethodGet, "/timeline", false, timelineHandler)
 	priv(r, http.MethodGet, "/notifications", false, notificationsHandler)
+	priv(r, http.MethodGet, "/remote", false, remoteProfileHandler)
 	// 他インスタンスのリモートフォローボタンから辿られる。webfinger の
 	// subscribe テンプレートで広告しているので実装が無いと 404 になる。
 	priv(r, http.MethodGet, "/authorize_interaction", false, authorizeInteractionHandler)
