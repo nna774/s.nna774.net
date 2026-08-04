@@ -26,6 +26,7 @@
 {{if .Statuses}}
   {{range .Statuses}}
     <article>
+      {{with .InReplyTo.ID}}<div class="reply-to">返信: <a href="{{.}}">{{.}}</a></div>{{end}}
       <div class="body">{{sanitize .Content}}</div>
       <div class="meta">
         <a href="{{.URL}}">{{datetime .Published}}</a>
