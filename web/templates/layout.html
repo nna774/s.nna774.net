@@ -39,7 +39,7 @@ article .body p { margin: .4rem 0; }
 article .attachments { display: flex; flex-wrap: wrap; gap: .5rem; margin-top: .5rem; }
 article .attachments img, article .attachments video { max-width: 100%; max-height: 20rem;
   border-radius: .5rem; object-fit: contain; }
-article .meta { font-size: .8rem; color: var(--dim); margin-top: .4rem; display: flex; gap: .75rem; }
+article .meta { font-size: .8rem; color: var(--dim); margin-top: .4rem; display: flex; gap: .75rem; flex-wrap: wrap; }
 form.compose { border: 1px solid var(--line); border-radius: .5rem; padding: 1rem; margin-bottom: 2rem; }
 form.compose textarea { width: 100%; min-height: 5rem; padding: .5rem; font: inherit; resize: vertical;
   background: var(--bg); color: var(--fg); border: 1px solid var(--line); border-radius: .25rem; }
@@ -116,6 +116,47 @@ function unfollowActor(e, actorURI, localPart) {
   fetch('/u/' + localPart + '/following?actor=' + encodeURIComponent(actorURI), { method: 'DELETE' })
     .then(r => r.ok ? location.reload() : alert('フォロー解除に失敗しました'))
     .catch(() => alert('フォロー解除に失敗しました'));
+}
+
+function postReaction(path, object, actor) {
+  return fetch(path, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: 'object=' + encodeURIComponent(object) + '&actor=' + encodeURIComponent(actor),
+  });
+}
+
+function deleteReaction(path, object) {
+  return fetch(path + '?object=' + encodeURIComponent(object), { method: 'DELETE' });
+}
+
+function likeStatus(e, object, actor, localPart) {
+  e.preventDefault();
+  postReaction('/u/' + localPart + '/likes', object, actor)
+    .then(r => r.ok ? location.reload() : alert('いいねに失敗しました'))
+    .catch(() => alert('いいねに失敗しました'));
+}
+
+function unlikeStatus(e, object, localPart) {
+  e.preventDefault();
+  deleteReaction('/u/' + localPart + '/likes', object)
+    .then(r => r.ok ? location.reload() : alert('取り消しに失敗しました'))
+    .catch(() => alert('取り消しに失敗しました'));
+}
+
+function boostStatus(e, object, actor, localPart) {
+  e.preventDefault();
+  if (!confirm('この投稿をブーストする。よいか')) return;
+  postReaction('/u/' + localPart + '/boosts', object, actor)
+    .then(r => r.ok ? location.reload() : alert('ブーストに失敗しました'))
+    .catch(() => alert('ブーストに失敗しました'));
+}
+
+function unboostStatus(e, object, localPart) {
+  e.preventDefault();
+  deleteReaction('/u/' + localPart + '/boosts', object)
+    .then(r => r.ok ? location.reload() : alert('取り消しに失敗しました'))
+    .catch(() => alert('取り消しに失敗しました'));
 }
 </script>
 </body>

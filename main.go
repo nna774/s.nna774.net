@@ -404,6 +404,10 @@ func newRouter() *httprouter.Router {
 	priv(r, http.MethodDelete, "/u/:user/status/:id", true, deleteStatusHandler)
 	priv(r, http.MethodPost, "/u/:user/following", true, followRequestHandler)
 	priv(r, http.MethodDelete, "/u/:user/following", true, unfollowRequestHandler)
+	priv(r, http.MethodPost, "/u/:user/likes", true, likeRequestHandler)
+	priv(r, http.MethodDelete, "/u/:user/likes", true, unlikeRequestHandler)
+	priv(r, http.MethodPost, "/u/:user/boosts", true, boostRequestHandler)
+	priv(r, http.MethodDelete, "/u/:user/boosts", true, unboostRequestHandler)
 
 	return r
 }

@@ -56,6 +56,12 @@ const (
 	KVActorKey  = "actorkey"
 	KVSeen      = "seen"
 	KVLikes     = "likes"
+	// KVMyLikes / KVMyBoosts は自分が他人の投稿にいいね・ブーストした記録。
+	// SK は対象投稿の URI。取り消し (Undo) のときに元の Activity の id と
+	// 配信先を引き直さずに済ませるために持つ。KVLikes (自分の投稿に付いた
+	// いいね) とは向きが逆なので分けてある。
+	KVMyLikes  = "mylikes"
+	KVMyBoosts = "myboosts"
 	// KVCursor は「どこまで読んだか」を持つ。通知の未読判定に使う。
 	KVCursor = "cursor"
 	// KVActorInfo はフォロー関係にない相手の表示名とアイコンのキャッシュ。
@@ -87,6 +93,14 @@ type KVItem struct {
 
 	// Cursor は cursor パーティションで使う既読位置 (連番)。
 	Cursor int `dynamo:"cursor,omitempty"`
+
+	// mylikes / myboosts。ActivityID は Undo の object に詰め直す元の
+	// Like/Announce の id。Inbox は配信先 (いいねは対象投稿の著者の inbox)。
+	// TargetActor はブーストした投稿の著者 (Undo を直接その inbox にも
+	// 届けるために持つ)。TimelineID は自分のブーストをタイムラインに
+	// 積んだときの連番で、Undo でそこだけ消すのに使う。
+	TargetActor string `dynamo:"targetActor,omitempty"`
+	TimelineID  int    `dynamo:"timelineID,omitempty"`
 
 	// TTL は Unix 秒。0 なら期限なし。
 	TTL int64 `dynamo:"ttl,omitempty"`

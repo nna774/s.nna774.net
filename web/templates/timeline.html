@@ -62,6 +62,16 @@
         {{else}}
           <span>{{datetime .Published}}</span>
         {{end}}
+        {{if .Liked}}
+          <a href="#" onclick="unlikeStatus(event, '{{.ObjectURI}}', '{{$.LocalPart}}')">いいね済み</a>
+        {{else}}
+          <a href="#" onclick="likeStatus(event, '{{.ObjectURI}}', '{{.AuthorURI}}', '{{$.LocalPart}}')">いいね</a>
+        {{end}}
+        {{if .Boosted}}
+          <a href="#" onclick="unboostStatus(event, '{{.ObjectURI}}', '{{$.LocalPart}}')">ブースト済み</a>
+        {{else}}
+          <a href="#" onclick="boostStatus(event, '{{.ObjectURI}}', '{{.AuthorURI}}', '{{$.LocalPart}}')">ブースト</a>
+        {{end}}
         {{if .Mine}}
           <a href="#" onclick="deleteStatus(event, '{{.StatusID}}', '{{$.LocalPart}}')">削除</a>
         {{else}}
