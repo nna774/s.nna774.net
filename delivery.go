@@ -18,11 +18,22 @@ const timelineKey = "timeline"
 
 // appendToTimeline は受信した Activity を新しい順に読めるよう連番で保存する。
 func appendToTimeline(ctx context.Context, in *activitystream.Object) error {
+	_, err := appendToTimelineWithID(ctx, in)
+	return err
+}
+
+// appendToTimelineWithID は appendToTimeline と同じだが、割り当てた連番も
+// 返す。自分のブーストのように、あとで Undo のために取り消す先を覚えて
+// おきたい場合に使う。
+func appendToTimelineWithID(ctx context.Context, in *activitystream.Object) (int, error) {
 	id, err := client.Inc(ctx, timelineKey)
 	if err != nil {
-		return err
+		return 0, err
 	}
-	return client.Put(ctx, timelineKey, id, in)
+	if err := client.Put(ctx, timelineKey, id, in); err != nil {
+		return 0, err
+	}
+	return id, nil
 }
 
 // sendToInbox は署名付きで1つの inbox に Activity を送る。

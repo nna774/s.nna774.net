@@ -366,6 +366,10 @@ type timelineItem struct {
 	// 書いた人とブーストした人が別なので、著者とは分けて持つ。
 	BoostedByName string
 	BoostedByURI  string
+	// Liked / Boosted は自分が既にいいね・ブースト済みかどうか。ボタンの
+	// 出し分けに使う。
+	Liked   bool
+	Boosted bool
 	// sortKey は並べ替え用。published を解釈できたものはその時刻、
 	// 解釈できなければゼロ値。
 	sortKey time.Time
@@ -407,6 +411,8 @@ func timelineHandler(w http.ResponseWriter, r *http.Request) httperror.HttpError
 		return httperror.StatusInternalServerError("cannot read the outbox", err)
 	}
 
+	reactions := loadReactionState(ctx)
+
 	items := make([]timelineItem, 0, len(received)+len(mine))
 	for _, act := range append(append([]*activitystream.Object{}, received...), mine...) {
 		note := act.Object.Item()
@@ -434,6 +440,8 @@ func timelineHandler(w http.ResponseWriter, r *http.Request) httperror.HttpError
 			ObjectURI:   note.ID,
 			InReplyTo:   note.InReplyTo.ID(),
 			Mine:        isMine,
+			Liked:       reactions.liked[note.ID],
+			Boosted:     reactions.boosted[note.ID],
 			sortKey:     publishedTime(published),
 		}
 		// authorName / cachedIconURL は自分の分も設定から返す。
