@@ -161,7 +161,11 @@ func jsonUserHander(w http.ResponseWriter, r *http.Request) httperror.HttpError 
 
 // wantsActivityJSON は ActivityPub のクライアントかブラウザかを判定する。
 // 以前は Accept に "json" が含まれるかという雑な判定だった。
+// URL が .json で終わる場合も JSON を要求しているとみなす。
 func wantsActivityJSON(r *http.Request) bool {
+	if strings.HasSuffix(r.URL.Path, ".json") {
+		return true
+	}
 	accept := strings.ToLower(r.Header.Get("Accept"))
 	for _, t := range []string{"application/activity+json", "application/ld+json", "application/json"} {
 		if strings.Contains(accept, t) {
