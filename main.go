@@ -359,29 +359,29 @@ func saveToOutbox(ctx context.Context, id int, create *activitystream.Object) er
 	return err
 }
 
-// stripJSONSuffix は URL の .json 拡張子を取り除く middleware。
-// wantsActivityJSON で `.json` 拡張子を判定しているため、URL 自体から削除する必要はないが、
-// httprouter でルーティングパターンの衝突を避けるため、ここで削除してから
-// 実際のハンドラに渡す。
-func stripJSONSuffix(h httperror.HandleFuncWithError) httperror.HandleFuncWithError {
-	return func(w http.ResponseWriter, r *http.Request) httperror.HttpError {
-		if strings.HasSuffix(r.URL.Path, ".json") {
-			r.URL.Path = strings.TrimSuffix(r.URL.Path, ".json")
-		}
-		return h(w, r)
+// stripJSONSuffixHandler は http.Handler レベルで URL の .json 拡張子を除去する。
+// ルーティング前に実行されるため、httprouter で正しくマッチングされるようになる。
+type stripJSONSuffixHandler struct {
+	handler http.Handler
+}
+
+func (h *stripJSONSuffixHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	if strings.HasSuffix(r.URL.Path, ".json") {
+		r.URL.Path = strings.TrimSuffix(r.URL.Path, ".json")
 	}
+	h.handler.ServeHTTP(w, r)
 }
 
 // pub は認証を掛けないエンドポイントを登録する。連合が依存するものは
 // すべてこちらでなければならない。
 func pub(r *httprouter.Router, method, path string, h httperror.HandleFuncWithError) {
-	r.Handler(method, path, stripJSONSuffix(h))
+	r.Handler(method, path, h)
 }
 
 // priv は認証必須のエンドポイントを登録する。mutating が true のものには
 // CSRF 対策 (Sec-Fetch-Site の検証) も掛かる。
 func priv(r *httprouter.Router, method, path string, mutating bool, h httperror.HandleFuncWithError) {
-	r.Handler(method, path, requireAuth(mutating, stripJSONSuffix(h)))
+	r.Handler(method, path, requireAuth(mutating, h))
 }
 
 // newRouter はルーティングを組み立てる。main から切り出してあるのは、
@@ -439,10 +439,11 @@ func main() {
 	}
 
 	r := newRouter()
+	h := &stripJSONSuffixHandler{handler: r}
 
 	if config.IsDevelopment() {
-		http.ListenAndServe("localhost:8080", r)
+		http.ListenAndServe("localhost:8080", h)
 	} else {
-		algnhsa.ListenAndServe(r, &algnhsa.Options{RequestType: algnhsa.RequestTypeAPIGatewayV1})
+		algnhsa.ListenAndServe(h, &algnhsa.Options{RequestType: algnhsa.RequestTypeAPIGatewayV1})
 	}
 }
