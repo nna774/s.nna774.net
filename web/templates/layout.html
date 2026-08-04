@@ -26,6 +26,9 @@ header.site nav a, header.site nav button { margin-left: .75rem; }
 .handle { color: var(--dim); font-size: .9rem; word-break: break-all; }
 .counts { color: var(--dim); font-size: .85rem; margin-top: .5rem; }
 .counts b { color: var(--fg); }
+.fields { display: grid; grid-template-columns: auto 1fr; gap: .1rem .75rem; margin: .5rem 0 0; font-size: .85rem; }
+.fields dt { color: var(--dim); }
+.fields dd { margin: 0; word-break: break-all; }
 article { border-bottom: 1px solid var(--line); padding: 1rem 0; }
 article:last-of-type { border-bottom: none; }
 article .who { display: flex; gap: .5rem; align-items: center; font-size: .85rem; color: var(--dim); margin-bottom: .35rem; }
@@ -54,6 +57,11 @@ article.notice .target.gone { text-decoration: line-through; }
 article .boosted { font-size: .8rem; color: var(--dim); margin-bottom: .25rem; }
 .reply-to { font-size: .85rem; color: var(--dim); margin-bottom: .5rem; }
 .empty { color: var(--dim); text-align: center; padding: 3rem 0; }
+.page-title { font-size: 1.1rem; margin: 0 0 1rem; }
+.more { font-size: .9rem; margin-top: 1rem; }
+.pager { display: flex; gap: 1rem; align-items: baseline; justify-content: center;
+  margin-top: 2rem; font-size: .9rem; }
+.pager span { color: var(--dim); }
 .error { color: #c0392b; }
 pre, code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .9em; }
 pre { overflow-x: auto; }

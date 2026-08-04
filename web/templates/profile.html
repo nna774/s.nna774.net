@@ -5,8 +5,16 @@
     <h2>{{.Name}}</h2>
     <div class="handle">{{.Handle}}</div>
     {{with .Summary}}<div>{{.}}</div>{{end}}
+    {{with .Fields}}
+      <dl class="fields">
+        {{range .}}
+          <dt>{{.Name}}</dt>
+          <dd>{{sanitize .Value}}</dd>
+        {{end}}
+      </dl>
+    {{end}}
     <div class="counts">
-      投稿 <b>{{.StatusCount}}</b>
+      <a href="/u/{{.LocalPart}}/status">投稿 <b>{{.StatusCount}}</b></a>
       {{if not .HideCollections}}
         ・ <a href="/u/{{.LocalPart}}/followers">フォロワー <b>{{.FollowerCount}}</b></a>
         ・ <a href="/u/{{.LocalPart}}/following">フォロー <b>{{.FollowingCount}}</b></a>
@@ -23,6 +31,9 @@
         <a href="{{.URL}}">{{datetime .Published}}</a>
       </div>
     </article>
+  {{end}}
+  {{if .HasMore}}
+    <p class="more"><a href="/u/{{.LocalPart}}/status">これより古い投稿</a></p>
   {{end}}
 {{else}}
   <p class="empty">まだ投稿がない。</p>

@@ -141,9 +141,21 @@ func webfingerHandler(w http.ResponseWriter, r *http.Request) httperror.HttpErro
 	return respondJSONWithoutActivityType(w, http.StatusOK, resp)
 }
 
+// profileFields は config の fields を actor の attachment に直す。
+func profileFields() activitystream.Objects {
+	if len(Config.Fields) == 0 {
+		return nil
+	}
+	fields := make(activitystream.Objects, 0, len(Config.Fields))
+	for _, f := range Config.Fields {
+		fields = append(fields, activitystream.NewPropertyValue(f.Name, f.Value))
+	}
+	return fields
+}
+
 func jsonUserHander(w http.ResponseWriter, r *http.Request) httperror.HttpError {
 	resp := activitystream.NewUserResource(
-		Config.ID(), Config.Name, Config.IconURI, Config.IconMediaType(), Config.LocalPart(), inboxURI(), outboxURI(), followersURI(), followingURI(), Config.Summary, mainKeyURI(), Config.PublicKey())
+		Config.ID(), Config.Name, Config.IconURI, Config.IconMediaType(), Config.LocalPart(), inboxURI(), outboxURI(), followersURI(), followingURI(), Config.Summary, mainKeyURI(), Config.PublicKey(), profileFields())
 	return respondAsJSON(w, http.StatusOK, resp)
 }
 
@@ -352,11 +364,9 @@ func priv(r *httprouter.Router, method, path string, mutating bool, h httperror.
 	r.Handler(method, path, requireAuth(mutating, h))
 }
 
-func main() {
-	if err := setup(context.Background()); err != nil {
-		log.Fatalf("startup failed: %v", err)
-	}
-
+// newRouter はルーティングを組み立てる。main から切り出してあるのは、
+// 経路の登録そのものをテストから確かめられるようにするため。
+func newRouter() *httprouter.Router {
 	r := httprouter.New()
 
 	// --- 公開 (認証を掛けてはならない) ---------------------------------
@@ -367,6 +377,7 @@ func main() {
 	pub(r, http.MethodPost, "/u/:user/inbox", postInboxHandler)
 	pub(r, http.MethodGet, "/u/:user/outbox", outboxHandler)
 	pub(r, http.MethodGet, "/u/:user/outbox/page", outboxPageHandler)
+	pub(r, http.MethodGet, "/u/:user/status", statusesHandler)
 	pub(r, http.MethodGet, "/u/:user/status/:id", statusHandler)
 	pub(r, http.MethodGet, "/u/:user/followers", collectionHandler(datastore.KVFollowers, followersURI, "フォロワー"))
 	pub(r, http.MethodGet, "/u/:user/following", collectionHandler(datastore.KVFollowing, followingURI, "フォロー中"))
@@ -392,6 +403,16 @@ func main() {
 	priv(r, http.MethodDelete, "/u/:user/status/:id", true, deleteStatusHandler)
 	priv(r, http.MethodPost, "/u/:user/following", true, followRequestHandler)
 	priv(r, http.MethodDelete, "/u/:user/following", true, unfollowRequestHandler)
+
+	return r
+}
+
+func main() {
+	if err := setup(context.Background()); err != nil {
+		log.Fatalf("startup failed: %v", err)
+	}
+
+	r := newRouter()
 
 	if config.IsDevelopment() {
 		http.ListenAndServe("localhost:8080", r)

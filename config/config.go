@@ -27,6 +27,11 @@ type Config struct {
 	Summary        string   `yaml:"summary"`
 	PublicKeyName  string   `yaml:"public_key_name"`
 
+	// Fields はプロフィールに並べる追加情報。Mastodon 系は actor の
+	// attachment に入っている PropertyValue をプロフィール欄の表として
+	// 表示する。
+	Fields []Field `yaml:"fields"`
+
 	// AutoAcceptFollow が false の場合、受け取った Follow は pending で
 	// 保留し、手動で Accept するまでフォロワーに数えない。
 	AutoAcceptFollow bool `yaml:"auto_accept_follow"`
@@ -49,6 +54,14 @@ type Config struct {
 	publicKey     string
 	apiToken      string
 	sessionSecret string
+}
+
+// Field はプロフィールの1項目。Value が http(s) の URL のときはリンクに
+// なる。リンク先に actor へ戻る rel="me" のリンクがあれば、Mastodon は
+// その項目を検証済みとして表示する。
+type Field struct {
+	Name  string `yaml:"name"`
+	Value string `yaml:"value"`
 }
 
 // IsDevelopment はローカル実行かどうかを返す。秘密情報をファイルから
