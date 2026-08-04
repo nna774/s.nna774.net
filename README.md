@@ -48,6 +48,7 @@ Lambda (provided.al2023, arm64, bootstrap)
 | `POST /u/:user/inbox` | 受信。HTTP Signature 必須 |
 | `GET /u/:user/outbox` | `OrderedCollection` |
 | `GET /u/:user/outbox/page` | `since_id` / `until_id` でページング |
+| `GET /u/:user/status` | 投稿一覧 (HTML)。`page=n` で古い方へ遡る |
 | `GET /u/:user/status/:id` | 個別投稿 (JSON / HTML) |
 | `GET /u/:user/followers`, `/following` | コレクション |
 | `GET /.well-known/webfinger` | `application/jrd+json` |

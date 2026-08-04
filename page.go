@@ -67,6 +67,9 @@ type profilePage struct {
 	HideCollections bool
 	Fields          activitystream.Objects
 	Statuses        []*activitystream.Object
+	// HasMore はプロフィールに出し切れなかった投稿があることを示す。
+	// 立っているときだけ投稿一覧へのリンクを出す。
+	HasMore bool
 }
 
 const profileStatusCount = 20
@@ -99,6 +102,10 @@ func htmlUserHandler(w http.ResponseWriter, r *http.Request) httperror.HttpError
 		HideCollections: Config.HideCollections,
 		Fields:          profileFields(),
 		Statuses:        notes,
+		// 取れるだけ取れたなら、その先にもまだあると見なす。ちょうど
+		// profileStatusCount 件しか無いときに空の一覧へ誘ってしまうが、
+		// そのために全件を数え直すほどのことではない。
+		HasMore: len(notes) >= profileStatusCount,
 	}
 	if !Config.HideCollections {
 		page.FollowerCount = countOrZero(ctx, datastore.KVFollowers)
@@ -114,6 +121,101 @@ func countOrZero(ctx context.Context, partition string) int {
 		return 0
 	}
 	return n
+}
+
+// --- 投稿一覧 ---------------------------------------------------------
+
+type statusesItem struct {
+	StatusID  int
+	Content   string
+	Published string
+	ObjectURI string
+	InReplyTo string
+}
+
+type statusesPage struct {
+	pageBase
+	Statuses []statusesItem
+	Page     int
+	PrevPage int
+	NextPage int
+	HasPrev  bool
+	HasNext  bool
+}
+
+const statusesPerPage = 20
+
+// statusesRange は page ページ目を出すのに必要な取得件数と、取ったうち
+// 読み飛ばす先頭の件数を返す。DynamoDB の Query は「n 件目から」を指定
+// できないので、先頭から取って前のページ分を捨てるほかない。1件多く取る
+// のは、次のページがあるかどうかを判定するため。
+//
+// 深いページほど読む量が増えるが、outbox 全体を超えることはない。削除で
+// 連番に穴が空いても件数がずれないのはこちらの利点である。投稿が数千に
+// なって重くなるようなら until_id 方式のカーソルに替えること。
+func statusesRange(page, perPage int) (take, skip int) {
+	return page*perPage + 1, (page - 1) * perPage
+}
+
+// statusesHandler は自分の投稿を古い方まで遡れる一覧を出す。プロフィールは
+// 最新 profileStatusCount 件しか出さないので、その先を見るための入り口。
+func statusesHandler(w http.ResponseWriter, r *http.Request) httperror.HttpError {
+	ctx := r.Context()
+
+	pageNum, err := intParam(r, "page", 1)
+	if err != nil {
+		return httperror.StatusUnprocessableEntity("bad page", err)
+	}
+	if pageNum < 1 {
+		return httperror.StatusUnprocessableEntity("page must be 1 or greater", nil)
+	}
+
+	take, skip := statusesRange(pageNum, statusesPerPage)
+	entries, err := client.TakeEntries(ctx, outboxKey, datastore.Inf, take, datastore.Desc)
+	if err != nil && !errors.Is(err, datastore.ErrNotFound) {
+		return httperror.StatusInternalServerError("cannot read the outbox", err)
+	}
+	entries, hasNext := statusesSlice(entries, skip, statusesPerPage)
+
+	items := make([]statusesItem, 0, len(entries))
+	for _, e := range entries {
+		// outbox に入っているのは Create なので、中身の Note を取り出す。
+		note := e.Object.Object.Item()
+		if note == nil {
+			continue
+		}
+		items = append(items, statusesItem{
+			StatusID:  e.ID,
+			Content:   note.Content,
+			Published: note.Published,
+			ObjectURI: note.ID,
+			InReplyTo: note.InReplyTo.ID(),
+		})
+	}
+
+	page := statusesPage{
+		pageBase: newPageBase(r, Config.Name+" の投稿"),
+		Statuses: items,
+		Page:     pageNum,
+		PrevPage: pageNum - 1,
+		NextPage: pageNum + 1,
+		HasPrev:  pageNum > 1,
+		HasNext:  hasNext,
+	}
+	return renderPage(w, "statuses", page)
+}
+
+// statusesSlice は取ってきた分から該当ページを切り出し、次のページが
+// あるかどうかを返す。
+func statusesSlice(entries []datastore.Entry, skip, perPage int) ([]datastore.Entry, bool) {
+	if skip >= len(entries) {
+		return nil, false
+	}
+	entries = entries[skip:]
+	if len(entries) > perPage {
+		return entries[:perPage], true
+	}
+	return entries, false
 }
 
 // --- フォロワー / フォロー中の一覧 -----------------------------------
