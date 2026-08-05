@@ -80,7 +80,8 @@ func uploadToGyazo(ctx context.Context, accessToken string, filename string, con
 	}
 
 	var out struct {
-		URL string `json:"url"`
+		URL  string `json:"url"`
+		Type string `json:"type"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
 		return nil, fmt.Errorf("gyazo upload: decoding response failed: %w", err)
@@ -89,14 +90,62 @@ func uploadToGyazo(ctx context.Context, accessToken string, filename string, con
 		return nil, errors.New("gyazo upload: response had no url")
 	}
 
-	// レスポンスは type (拡張子) も返すが、mediaType には拡張子から
-	// 導いた MIME を使う。IconMediaType と同じ流儀。
+	// HEIC は多くのブラウザがそのまま <img> に出せない (Go の mime パッケージ
+	// も拡張子テーブルに .heic を持たず application/octet-stream に落ちる)。
+	// この場合だけ Gyazo が生成する JPEG サムネイルの URL に差し替えて、
+	// タイムライン上で普通の画像として表示できるようにする。それ以外の
+	// 形式 (png/jpg/gif 等) はそのまま直リンクを使う。
+	resultURL := out.URL
 	mediaType := "application/octet-stream"
-	if u, err := url.Parse(out.URL); err == nil {
+	if isHEICUpload(out.Type, out.URL) {
+		if thumb, ok := gyazoHEICThumbnailURL(out.URL); ok {
+			resultURL = thumb
+			mediaType = "image/jpeg"
+		}
+	} else if u, err := url.Parse(out.URL); err == nil {
 		if t := mime.TypeByExtension(path.Ext(u.Path)); t != "" {
 			mediaType = t
 		}
 	}
 
-	return &gyazoUploadResult{URL: out.URL, MediaType: mediaType}, nil
+	return &gyazoUploadResult{URL: resultURL, MediaType: mediaType}, nil
+}
+
+// isHEICUpload は Gyazo のレスポンスが HEIC/HEIF 画像かどうかを判定する。
+// type フィールドを優先し、無い場合は URL の拡張子で判定する。
+func isHEICUpload(typ, rawURL string) bool {
+	switch strings.ToLower(typ) {
+	case "heic", "heif":
+		return true
+	case "":
+		// type が無い古いレスポンス互換のため、URL の拡張子でも判定する。
+	default:
+		return false
+	}
+	u, err := url.Parse(rawURL)
+	if err != nil {
+		return false
+	}
+	switch strings.ToLower(strings.TrimPrefix(path.Ext(u.Path), ".")) {
+	case "heic", "heif":
+		return true
+	default:
+		return false
+	}
+}
+
+// gyazoHEICThumbnailURL は HEIC の直リンク URL (https://i.gyazo.com/<hash>.heic)
+// から、そのまま表示できる JPEG サムネイルの URL を組み立てる。
+// 例: https://i.gyazo.com/thumb/1000/<hash>-heic.jpg
+func gyazoHEICThumbnailURL(rawURL string) (string, bool) {
+	u, err := url.Parse(rawURL)
+	if err != nil {
+		return "", false
+	}
+	base := path.Base(u.Path)
+	hash := strings.TrimSuffix(base, path.Ext(base))
+	if hash == "" {
+		return "", false
+	}
+	return fmt.Sprintf("https://i.gyazo.com/thumb/1000/%s-heic.jpg", hash), true
 }
