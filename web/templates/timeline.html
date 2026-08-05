@@ -73,7 +73,17 @@
       </div>
     </article>
   {{end}}
-{{else}}
+{{else if eq .Page 1}}
   <p class="empty">受信したものはまだ無い。誰かをフォローすれば流れてくる。</p>
+{{else}}
+  <p class="empty">このページに投稿は無い。</p>
+{{end}}
+
+{{if or .HasPrev .HasNext}}
+<nav class="pager">
+  {{if .HasPrev}}<a href="/timeline?page={{.PrevPage}}">← 新しい</a>{{end}}
+  <span>{{.Page}} ページ目</span>
+  {{if .HasNext}}<a href="/timeline?page={{.NextPage}}">古い →</a>{{end}}
+</nav>
 {{end}}
 {{end}}

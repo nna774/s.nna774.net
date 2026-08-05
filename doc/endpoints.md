@@ -54,7 +54,7 @@
 
 | メソッド | パス | 説明 | 認証 |
 |---|---|---|---|
-| `GET` | `/timeline` | 受信タイムライン (投稿フォーム込み) | Bearer / Cookie |
+| `GET` | `/timeline` | 受信タイムライン (投稿フォーム込み)。`?page=n` で古い方へ遡る | Bearer / Cookie |
 | `GET` | `/notifications` | 通知一覧 (いいね・ブースト・返信・フォロー) | Bearer / Cookie |
 
 ### 投稿・削除

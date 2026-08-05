@@ -60,7 +60,7 @@ Lambda (provided.al2023, arm64, bootstrap)
 
 | | |
 |---|---|
-| `GET /timeline` | 受信タイムライン (投稿フォーム込み) |
+| `GET /timeline` | 受信タイムライン (投稿フォーム込み)。`page=n` で古い方へ遡る |
 | `GET /notifications` | 通知 (いいね・ブースト・自分宛の返信・フォロー) |
 | `POST /u/:user/statuses` | 投稿 (JSON / form) |
 | `POST /u/:user/statuses/:id/delete` | 削除 (form 用) |

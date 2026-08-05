@@ -213,6 +213,37 @@ func TestTimelinePageRenderWithAttachment(t *testing.T) {
 	}
 }
 
+func TestTimelinePagerRender(t *testing.T) {
+	page := timelinePage{
+		pageBase: pageBase{Title: "タイムライン", SiteName: "nana", LocalPart: "nana", Handle: "@nana"},
+		Items: []timelineItem{{
+			AuthorName: "someone",
+			AuthorURI:  "https://example.com/users/someone",
+			Content:    "<p>古い投稿</p>",
+			Published:  "2026-08-01T12:00:00Z",
+		}},
+		Page:     2,
+		PrevPage: 1,
+		NextPage: 3,
+		HasPrev:  true,
+		HasNext:  true,
+	}
+	buf := &bytes.Buffer{}
+	if err := web.Render(buf, "timeline", page); err != nil {
+		t.Fatalf("rendering timeline failed: %v", err)
+	}
+	html := buf.String()
+	for _, want := range []string{
+		"/timeline?page=1",
+		"/timeline?page=3",
+		"古い投稿",
+	} {
+		if !strings.Contains(html, want) {
+			t.Errorf("rendered page does not contain %q", want)
+		}
+	}
+}
+
 // プロフィールに自分のブーストが「著者名 の投稿をブースト」の形で出ること、
 // 自分の投稿には出ないことを確かめる。
 func TestProfilePageRendersBoosts(t *testing.T) {
