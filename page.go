@@ -400,27 +400,29 @@ func favoritesHandler(w http.ResponseWriter, r *http.Request) httperror.HttpErro
 
 type statusPage struct {
 	pageBase
-	Name      string
-	IconURL   string
-	Content   string
-	Published string
-	ObjectURI string
-	InReplyTo string
-	Excerpt   string
-	StatusID  int
+	Name        string
+	IconURL     string
+	Content     string
+	Attachments []attachmentItem
+	Published   string
+	ObjectURI   string
+	InReplyTo   string
+	Excerpt     string
+	StatusID    int
 }
 
 func htmlStatusHandler(w http.ResponseWriter, r *http.Request, id int, note *activitystream.Object) httperror.HttpError {
 	page := statusPage{
-		pageBase:  newPageBase(r, Config.Name+": "+excerpt(note.Content, 40)),
-		Name:      Config.Name,
-		IconURL:   Config.IconURI,
-		Content:   note.Content,
-		Published: note.Published,
-		ObjectURI: note.ID,
-		InReplyTo: note.InReplyTo.ID(),
-		Excerpt:   excerpt(note.Content, 140),
-		StatusID:  id,
+		pageBase:    newPageBase(r, Config.Name+": "+excerpt(note.Content, 40)),
+		Name:        Config.Name,
+		IconURL:     Config.IconURI,
+		Content:     note.Content,
+		Attachments: noteAttachments(note),
+		Published:   note.Published,
+		ObjectURI:   note.ID,
+		InReplyTo:   note.InReplyTo.ID(),
+		Excerpt:     excerpt(note.Content, 140),
+		StatusID:    id,
 	}
 	return renderPage(w, "status", page)
 }
