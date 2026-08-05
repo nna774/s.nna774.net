@@ -141,6 +141,7 @@ Lambda 実行時の設定。`build/config.yml` にコピーされてデプロイ
 | `/s.nna774.net/private-key` | HTTP Signature の署名鍵（RSA 2048） |
 | `/s.nna774.net/api-token` | API トークン |
 | `/s.nna774.net/session-secret` | Cookie 署名鍵 |
+| `/s.nna774.net/gyazo-access-token` | 画像投稿用の Gyazo アクセストークン |
 
 ## DynamoDB テーブル
 

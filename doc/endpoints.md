@@ -75,6 +75,11 @@
 }
 ```
 
+**画像添付**: `multipart/form-data` の `image` フィールドに画像を乗せると、
+Gyazo にアップロードした上で Note の `attachment` に載せる。JSON リクエスト
+にファイルを乗せる方法は無いので form 専用。`gyazo_access_token_parameter`
+が設定されていない場合はエラーになる。
+
 ### フォロー管理
 
 | メソッド | パス | 説明 | 認証 | リクエスト |
