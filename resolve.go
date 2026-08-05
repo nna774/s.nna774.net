@@ -68,8 +68,8 @@ func webfingerLookup(ctx context.Context, user, host string) (string, error) {
 // authorizeInteractionHandler は他インスタンスのリモートフォローボタンから
 // 辿られる。webfinger の subscribe テンプレートで広告している。
 //
-// 相手のハンドルを actor の URI に解決し、フォローフォームを埋めた
-// タイムラインに送る。実際にフォローするかは自分で押して決める。
+// 相手のハンドルを actor の URI に解決し、プロフィールを確認しつつ
+// フォローできる /remote に送る。実際にフォローするかは自分で押して決める。
 func authorizeInteractionHandler(w http.ResponseWriter, r *http.Request) httperror.HttpError {
 	raw := strings.TrimSpace(r.URL.Query().Get("uri"))
 	if raw == "" {
@@ -79,6 +79,6 @@ func authorizeInteractionHandler(w http.ResponseWriter, r *http.Request) httperr
 	if err != nil {
 		return httperror.StatusUnprocessableEntity("cannot resolve that handle", err)
 	}
-	http.Redirect(w, r, "/timeline?follow="+url.QueryEscape(actorURI), http.StatusSeeOther)
+	http.Redirect(w, r, "/remote?actor="+url.QueryEscape(actorURI), http.StatusSeeOther)
 	return nil
 }
