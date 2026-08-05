@@ -81,6 +81,37 @@ func TestUploadToGyazoGuessesContentTypeFromFilename(t *testing.T) {
 	}
 }
 
+// iPhone から HEIC のまま upload された場合、mime.TypeByExtension は
+// .heic を知らず application/octet-stream になってしまい、タイムライン上
+// では単なる添付ファイルリンクとしてしか表示できない。Gyazo の JPEG
+// サムネイル URL に差し替えて image として表示できるようにする。
+func TestUploadToGyazoRewritesHEICToThumbnail(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := r.ParseMultipartForm(1 << 20); err != nil {
+			t.Fatalf("server: ParseMultipartForm: %v", err)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"image_id":"abc","permalink_url":"https://gyazo.com/abc","url":"https://i.gyazo.com/e775974cff4ec68396c3bfc85b06aea4.heic","type":"heic"}`))
+	}))
+	defer srv.Close()
+
+	old := gyazoUploadURL
+	gyazoUploadURL = srv.URL
+	defer func() { gyazoUploadURL = old }()
+
+	result, err := uploadToGyazo(context.Background(), "test-token", "IMG_0001.heic", "image/heic", strings.NewReader("fake-heic-bytes"))
+	if err != nil {
+		t.Fatalf("uploadToGyazo: %v", err)
+	}
+	wantURL := "https://i.gyazo.com/thumb/1000/e775974cff4ec68396c3bfc85b06aea4-heic.jpg"
+	if result.URL != wantURL {
+		t.Errorf("URL = %q, want %q", result.URL, wantURL)
+	}
+	if result.MediaType != "image/jpeg" {
+		t.Errorf("MediaType = %q, want image/jpeg", result.MediaType)
+	}
+}
+
 // アクセストークンが無効な場合など、Gyazo が非 200 を返したらエラーに
 // しなければならない。ここを見落とすと、失敗した投稿の Attachment に
 // 空の URL が載ってしまう。
