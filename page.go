@@ -289,14 +289,20 @@ func statusesHandler(w http.ResponseWriter, r *http.Request) httperror.HttpError
 // statusesSlice は取ってきた分から該当ページを切り出し、次のページが
 // あるかどうかを返す。
 func statusesSlice(entries []datastore.Entry, skip, perPage int) ([]datastore.Entry, bool) {
-	if skip >= len(entries) {
+	return paginate(entries, skip, perPage)
+}
+
+// paginate は先頭から多めに取ってきたスライスから該当ページ分を切り出し、
+// 次のページがあるかどうかを返す。1件多く取っておくことで判定できる。
+func paginate[T any](items []T, skip, perPage int) ([]T, bool) {
+	if skip >= len(items) {
 		return nil, false
 	}
-	entries = entries[skip:]
-	if len(entries) > perPage {
-		return entries[:perPage], true
+	items = items[skip:]
+	if len(items) > perPage {
+		return items[:perPage], true
 	}
-	return entries, false
+	return items, false
 }
 
 // --- フォロワー / フォロー中の一覧 -----------------------------------
@@ -531,6 +537,11 @@ type timelinePage struct {
 	Items          []timelineItem
 	InReplyTo      string
 	MentionPrefill string
+	Page           int
+	PrevPage       int
+	NextPage       int
+	HasPrev        bool
+	HasNext        bool
 }
 
 const timelinePageSize = 40
@@ -549,13 +560,26 @@ func publishedTime(s string) time.Time {
 func timelineHandler(w http.ResponseWriter, r *http.Request) httperror.HttpError {
 	ctx := r.Context()
 
+	pageNum, err := intParam(r, "page", 1)
+	if err != nil {
+		return httperror.StatusUnprocessableEntity("bad page", err)
+	}
+	if pageNum < 1 {
+		return httperror.StatusUnprocessableEntity("page must be 1 or greater", nil)
+	}
+	take, skip := statusesRange(pageNum, timelinePageSize)
+
 	// 受信したものと自分の投稿を混ぜる。Mastodon のホームタイムラインも
 	// 自分の投稿を含む。自分自身をフォローするような裏技は要らない。
-	received, err := client.TakeObject(ctx, timelineKey, datastore.Inf, timelinePageSize, datastore.Desc)
+	// 2つの連番は別物で、時刻でマージした後にしか順序が確定しないため、
+	// 深いページを出すにはどちらの取得件数も take まで増やす必要がある
+	// （statusesRange と同じ「多めに取って捨てる」方式。詳細はそちらの
+	// コメントを参照）。
+	received, err := client.TakeObject(ctx, timelineKey, datastore.Inf, take, datastore.Desc)
 	if err != nil && !errors.Is(err, datastore.ErrNotFound) {
 		return httperror.StatusInternalServerError("cannot read the timeline", err)
 	}
-	mine, err := client.TakeObject(ctx, outboxKey, datastore.Inf, timelinePageSize, datastore.Desc)
+	mine, err := client.TakeObject(ctx, outboxKey, datastore.Inf, take, datastore.Desc)
 	if err != nil && !errors.Is(err, datastore.ErrNotFound) {
 		return httperror.StatusInternalServerError("cannot read the outbox", err)
 	}
@@ -612,14 +636,17 @@ func timelineHandler(w http.ResponseWriter, r *http.Request) httperror.HttpError
 	sort.SliceStable(items, func(i, j int) bool {
 		return items[i].sortKey.After(items[j].sortKey)
 	})
-	if len(items) > timelinePageSize {
-		items = items[:timelinePageSize]
-	}
+	items, hasNext := paginate(items, skip, timelinePageSize)
 
 	page := timelinePage{
 		pageBase:  newPageBase(r, "タイムライン"),
 		Items:     items,
 		InReplyTo: r.URL.Query().Get("in_reply_to"),
+		Page:      pageNum,
+		PrevPage:  pageNum - 1,
+		NextPage:  pageNum + 1,
+		HasPrev:   pageNum > 1,
+		HasNext:   hasNext,
 	}
 	page.UnreadCount = len(unreadNotifications(ctx))
 	// 返信リンクから来たときは mention 先を埋めておく。
