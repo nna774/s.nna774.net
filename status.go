@@ -33,17 +33,27 @@ type statusRequest struct {
 	Mentions   []string `json:"mentions"`
 }
 
+// normalize は content の trim と visibility の検証だけを行う。content が
+// 空でよいかどうかは画像添付の有無に依るため、ここでは判断しない
+// (postStatusHandler が imageAttachmentFromRequest の結果と合わせて見る)。
 func (req *statusRequest) normalize() error {
 	req.Content = strings.TrimSpace(req.Content)
-	if req.Content == "" {
-		return errors.New("content must not be empty")
-	}
 	switch req.Visibility {
 	case "":
 		req.Visibility = visibilityPublic
 	case visibilityPublic, visibilityUnlisted, visibilityFollowers:
 	default:
 		return fmt.Errorf("unknown visibility %q", req.Visibility)
+	}
+	return nil
+}
+
+// requireContentOrAttachment は content と画像添付の少なくとも一方を要求
+// する。画像だけの投稿を許すため content 単体では必須にできないが、
+// 両方無い投稿は空でしかないので弾く。
+func requireContentOrAttachment(content string, attachment *activitystream.Object) error {
+	if content == "" && attachment == nil {
+		return errors.New("content must not be empty unless an image is attached")
 	}
 	return nil
 }
@@ -121,6 +131,9 @@ func postStatusHandler(w http.ResponseWriter, r *http.Request) httperror.HttpErr
 	attachment, herr := imageAttachmentFromRequest(ctx, r)
 	if herr != nil {
 		return herr
+	}
+	if err := requireContentOrAttachment(req.Content, attachment); err != nil {
+		return httperror.StatusUnprocessableEntity(err.Error(), nil)
 	}
 
 	id, err := client.Inc(ctx, statusKey)
@@ -369,7 +382,7 @@ func imageAttachmentFromRequest(ctx context.Context, r *http.Request) (*activity
 	if Config.GyazoAccessToken() == "" {
 		return nil, httperror.StatusInternalServerError("image upload is not configured", nil)
 	}
-	result, err := uploadToGyazo(ctx, Config.GyazoAccessToken(), header.Filename, file)
+	result, err := uploadToGyazo(ctx, Config.GyazoAccessToken(), header.Filename, header.Header.Get("Content-Type"), file)
 	if err != nil {
 		return nil, httperror.StatusInternalServerError("cannot upload the image to gyazo", err)
 	}

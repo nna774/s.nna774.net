@@ -10,8 +10,10 @@ import (
 	"mime"
 	"mime/multipart"
 	"net/http"
+	"net/textproto"
 	"net/url"
 	"path"
+	"strings"
 )
 
 // gyazoUploadURL は var にしてある。テストから httptest サーバへ差し替える
@@ -23,16 +25,34 @@ type gyazoUploadResult struct {
 	MediaType string
 }
 
+// quoteEscaper は mime/multipart.CreateFormFile 内部にある同名の未公開
+// ヘルパーと同じ規則。Content-Disposition の filename に使う。
+var quoteEscaper = strings.NewReplacer("\\", "\\\\", `"`, "\\\"")
+
 // uploadToGyazo は画像データを Gyazo にアップロードし、直リンクの URL を
 // 返す。自前で画像ストレージ (S3 等) を持たずに投稿へ画像を添付するための
 // 手段として、まずは Gyazo に投げる。
-func uploadToGyazo(ctx context.Context, accessToken string, filename string, data io.Reader) (*gyazoUploadResult, error) {
+func uploadToGyazo(ctx context.Context, accessToken string, filename string, contentType string, data io.Reader) (*gyazoUploadResult, error) {
 	body := &bytes.Buffer{}
 	mw := multipart.NewWriter(body)
 	if err := mw.WriteField("access_token", accessToken); err != nil {
 		return nil, err
 	}
-	part, err := mw.CreateFormFile("imagedata", filename)
+	// mw.CreateFormFile だと part の Content-Type が常に
+	// application/octet-stream に固定される。Gyazo はそれだと
+	// "Not an Image" で 400 を返すため、実際の画像の Content-Type を
+	// 自分でヘッダに積む。
+	if contentType == "" {
+		if t := mime.TypeByExtension(path.Ext(filename)); t != "" {
+			contentType = t
+		} else {
+			contentType = "application/octet-stream"
+		}
+	}
+	h := textproto.MIMEHeader{}
+	h.Set("Content-Disposition", fmt.Sprintf(`form-data; name="imagedata"; filename="%s"`, quoteEscaper.Replace(filename)))
+	h.Set("Content-Type", contentType)
+	part, err := mw.CreatePart(h)
 	if err != nil {
 		return nil, err
 	}
