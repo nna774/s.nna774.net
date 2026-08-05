@@ -87,6 +87,22 @@ aws ssm put-parameter --region ap-northeast-1 \
   --value "$SECRET"
 ```
 
+### 4. Gyazo アクセストークンの登録（画像投稿を使う場合）
+
+画像投稿は Gyazo にアップロードする方式なので、[Gyazo API](https://gyazo.com/api)
+でアプリを登録してアクセストークンを発行し、SSM に登録する。
+
+```sh
+aws ssm put-parameter --region ap-northeast-1 \
+  --name /s.nna774.net/gyazo-access-token \
+  --type SecureString --tier Standard \
+  --value "$GYAZO_ACCESS_TOKEN"
+```
+
+`config.yml` の `gyazo_access_token_parameter` が空、またはこのパラメータが
+未登録のままだと、画像添付付きの投稿はエラーになる（文章だけの投稿は影響
+しない）。
+
 ## 秘密情報の管理
 
 ### SSM Parameter Store について

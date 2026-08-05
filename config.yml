@@ -31,3 +31,5 @@ private_key_parameter: /s.nna774.net/private-key
 # 全セッションを失効させられる。
 api_token_parameter: /s.nna774.net/api-token
 session_secret_parameter: /s.nna774.net/session-secret
+# 画像投稿で使う Gyazo API のアクセストークン。空だと画像投稿は使えない。
+gyazo_access_token_parameter: /s.nna774.net/gyazo-access-token

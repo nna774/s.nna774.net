@@ -371,6 +371,28 @@ func NewCreate(createID string, actor string, to []string, cc []string, obj *Obj
 	}
 }
 
+func NewLike(likeID string, actorID string, objectID string) *Object {
+	return &Object{
+		Context: ContextActivityStreams,
+		ID:      likeID,
+		Type:    LikeType,
+		Actor:   URIRef(actorID),
+		Object:  URIRef(objectID),
+	}
+}
+
+func NewAnnounce(announceID string, actorID string, objectID string, to []string, cc []string) *Object {
+	return &Object{
+		Context: ContextActivityStreams,
+		ID:      announceID,
+		Type:    AnnounceType,
+		Actor:   URIRef(actorID),
+		Object:  URIRef(objectID),
+		To:      to,
+		Cc:      cc,
+	}
+}
+
 func NewDelete(deleteID string, actor string, to []string, objectID string) *Object {
 	return &Object{
 		Context: ContextActivityStreams,

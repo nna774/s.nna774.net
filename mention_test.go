@@ -62,6 +62,82 @@ func TestRenderContentEscapesAndParagraphs(t *testing.T) {
 	}
 }
 
+// 自分の投稿に書いた URL はリンクになってほしい。
+func TestRenderContentLinkifiesURLs(t *testing.T) {
+	for _, tt := range []struct {
+		name string
+		in   string
+		want string
+	}{
+		{
+			"単独",
+			"https://s.nna774.net/u/nana",
+			`<p><a href="https://s.nna774.net/u/nana">https://s.nna774.net/u/nana</a></p>`,
+		},
+		{
+			"文中",
+			"見て https://s.nna774.net/u/nana これ",
+			`<p>見て <a href="https://s.nna774.net/u/nana">https://s.nna774.net/u/nana</a> これ</p>`,
+		},
+		{
+			"文末の句点はURLに含めない",
+			"見て。https://s.nna774.net/u/nana。",
+			`<p>見て。<a href="https://s.nna774.net/u/nana">https://s.nna774.net/u/nana</a>。</p>`,
+		},
+		{
+			"括弧に包んだ場合は閉じ括弧を含めない",
+			"(https://s.nna774.net/u/nana)",
+			`<p>(<a href="https://s.nna774.net/u/nana">https://s.nna774.net/u/nana</a>)</p>`,
+		},
+		{
+			"クエリのアンパサンドはエスケープされたまま保持する",
+			"https://example.com/?a=1&b=2",
+			`<p><a href="https://example.com/?a=1&amp;b=2">https://example.com/?a=1&amp;b=2</a></p>`,
+		},
+		{
+			"http も拾う",
+			"http://example.com",
+			`<p><a href="http://example.com">http://example.com</a></p>`,
+		},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := renderContent(tt.in, nil); got != tt.want {
+				t.Errorf("renderContent(%q) = %q, want %q", tt.in, got, tt.want)
+			}
+		})
+	}
+}
+
+// javascript: などの危険なスキームは、http(s):// で始まらない限りマッチ
+// しないのでリンク化されない。href に javascript: が紛れ込む経路がないか
+// の回帰テスト。
+func TestRenderContentDoesNotLinkifyDangerousSchemes(t *testing.T) {
+	for _, in := range []string{
+		"javascript:alert(1)",
+		"javascript://alert(1)",
+		"data:text/html,<script>alert(1)</script>",
+		"vbscript:msgbox(1)",
+	} {
+		t.Run(in, func(t *testing.T) {
+			got := renderContent(in, nil)
+			if strings.Contains(got, "<a ") {
+				t.Errorf("renderContent(%q) linkified a dangerous scheme: %q", in, got)
+			}
+		})
+	}
+}
+
+// URL の中に @user@host らしき文字列が来ても、メンションリンクの href の
+// 中身を二重にリンクにしてはいけない。
+func TestRenderContentDoesNotDoubleLinkMentionHref(t *testing.T) {
+	ms := []mention{{Handle: "@kugayama@pawoo.net", ActorURI: "https://pawoo.net/users/kugayama"}}
+	got := renderContent("@kugayama@pawoo.net", ms)
+
+	if strings.Count(got, "<a ") != 1 {
+		t.Errorf("expected exactly one link, got: %s", got)
+	}
+}
+
 func TestRenderContentLinkifiesMentions(t *testing.T) {
 	ms := []mention{{Handle: "@kugayama@pawoo.net", ActorURI: "https://pawoo.net/users/kugayama"}}
 	got := renderContent("やあ @kugayama@pawoo.net", ms)
@@ -151,11 +227,17 @@ func TestAudience(t *testing.T) {
 }
 
 func TestStatusRequestNormalize(t *testing.T) {
-	t.Run("空の本文は拒否", func(t *testing.T) {
+	t.Run("空白のみの本文は trim される", func(t *testing.T) {
+		// 空でよいかどうかは画像添付の有無に依るため normalize は判断せず、
+		// requireContentOrAttachment (呼び出し側) が見る。ここでは trim だけ
+		// 確かめる。
 		for _, c := range []string{"", "   ", "\n\n"} {
 			req := &statusRequest{Content: c}
-			if err := req.normalize(); err == nil {
-				t.Errorf("normalize accepted %q", c)
+			if err := req.normalize(); err != nil {
+				t.Errorf("normalize(%q): %v", c, err)
+			}
+			if req.Content != "" {
+				t.Errorf("normalize(%q) left Content = %q, want empty", c, req.Content)
 			}
 		}
 	})

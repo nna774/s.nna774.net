@@ -1,10 +1,10 @@
 {{define "content"}}
-<form class="compose" method="post" action="/u/{{.LocalPart}}/statuses">
+<form class="compose" method="post" action="/u/{{.LocalPart}}/statuses" enctype="multipart/form-data">
   {{with .InReplyTo}}
     <div class="reply-to">返信先: <a href="{{.}}">{{.}}</a></div>
     <input type="hidden" name="in_reply_to" value="{{.}}">
   {{end}}
-  <textarea name="content" placeholder="いま何を考えている" required autofocus></textarea>
+  <textarea name="content" placeholder="いまなにしてる" autofocus></textarea>
   <div class="row">
     <select name="visibility" aria-label="公開範囲">
       <option value="public">公開</option>
@@ -13,15 +13,8 @@
     </select>
     <input type="text" name="mentions" placeholder="メンション先の actor URI (空白区切り)"
            value="{{.MentionPrefill}}">
-    <button type="submit" class="primary" title="Cmd-Enter (Ctrl-Enter) でも投稿できる">投稿</button>
-  </div>
-</form>
-
-<form class="compose" method="post" action="/u/{{.LocalPart}}/following">
-  <div class="row">
-    <input type="text" name="actor" value="{{.FollowPrefill}}"
-           placeholder="フォローしたい相手 (@user@host または actor の URI)" required>
-    <button type="submit">フォロー</button>
+    <input type="file" name="image" accept="image/*">
+    <button type="submit" class="primary post-submit" title="Cmd-Enter (Ctrl-Enter) でも投稿できる">投稿</button>
   </div>
 </form>
 
@@ -62,6 +55,16 @@
         {{else}}
           <span>{{datetime .Published}}</span>
         {{end}}
+        {{if .Liked}}
+          <a href="#" onclick="unlikeStatus(event, '{{.ObjectURI}}', '{{$.LocalPart}}')">いいね済み</a>
+        {{else}}
+          <a href="#" onclick="likeStatus(event, '{{.ObjectURI}}', '{{.AuthorURI}}', '{{$.LocalPart}}')">いいね</a>
+        {{end}}
+        {{if .Boosted}}
+          <a href="#" onclick="unboostStatus(event, '{{.ObjectURI}}', '{{$.LocalPart}}')">ブースト済み</a>
+        {{else}}
+          <a href="#" onclick="boostStatus(event, '{{.ObjectURI}}', '{{.AuthorURI}}', '{{$.LocalPart}}')">ブースト</a>
+        {{end}}
         {{if .Mine}}
           <a href="#" onclick="deleteStatus(event, '{{.StatusID}}', '{{$.LocalPart}}')">削除</a>
         {{else}}
@@ -70,7 +73,17 @@
       </div>
     </article>
   {{end}}
-{{else}}
+{{else if eq .Page 1}}
   <p class="empty">受信したものはまだ無い。誰かをフォローすれば流れてくる。</p>
+{{else}}
+  <p class="empty">このページに投稿は無い。</p>
+{{end}}
+
+{{if or .HasPrev .HasNext}}
+<nav class="pager">
+  {{if .HasPrev}}<a href="/timeline?page={{.PrevPage}}">← 新しい</a>{{end}}
+  <span>{{.Page}} ページ目</span>
+  {{if .HasNext}}<a href="/timeline?page={{.NextPage}}">古い →</a>{{end}}
+</nav>
 {{end}}
 {{end}}

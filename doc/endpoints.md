@@ -54,7 +54,7 @@
 
 | メソッド | パス | 説明 | 認証 |
 |---|---|---|---|
-| `GET` | `/timeline` | 受信タイムライン (投稿フォーム込み) | Bearer / Cookie |
+| `GET` | `/timeline` | 受信タイムライン (投稿フォーム込み)。`?page=n` で古い方へ遡る | Bearer / Cookie |
 | `GET` | `/notifications` | 通知一覧 (いいね・ブースト・返信・フォロー) | Bearer / Cookie |
 
 ### 投稿・削除
@@ -74,6 +74,11 @@
   "mentions": ["https://..."]       // (オプション) メンション対象のアクター URI
 }
 ```
+
+**画像添付**: `multipart/form-data` の `image` フィールドに画像を乗せると、
+Gyazo にアップロードした上で Note の `attachment` に載せる。JSON リクエスト
+にファイルを乗せる方法は無いので form 専用。`gyazo_access_token_parameter`
+が設定されていない場合はエラーになる。
 
 ### フォロー管理
 

@@ -64,15 +64,57 @@ type profilePage struct {
 	StatusCount     int
 	FollowerCount   int
 	FollowingCount  int
+	FavoriteCount   int
 	HideCollections bool
 	Fields          activitystream.Objects
-	Statuses        []*activitystream.Object
+	Statuses        []profileStatusItem
 	// HasMore はプロフィールに出し切れなかった投稿があることを示す。
-	// 立っているときだけ投稿一覧へのリンクを出す。
+	// 立っているときだけ投稿一覧へのリンクを出す。自分のブーストは対象外
+	// (投稿一覧ページ自体が自分の Note しか出さないため)。
 	HasMore bool
 }
 
+// profileStatusItem はプロフィールに並べる1件分。自分の投稿とブーストを
+// 混ぜて表示時刻順に並べるため、生の Note ではなくこちらに落とす。
+type profileStatusItem struct {
+	Content     string
+	Attachments []attachmentItem
+	Published   string
+	URL         string
+	InReplyTo   string
+	// Boosted / AuthorName / AuthorURI は自分がブーストした他人の投稿の
+	// ときだけ入る。
+	Boosted    bool
+	AuthorName string
+	AuthorURI  string
+	sortKey    time.Time
+}
+
 const profileStatusCount = 20
+
+// profileBoostScanLimit は自分のブーストを拾うために timeline を遡る件数。
+// timeline は全員分のログなので、自分の分だけを拾うのに走査するしかない。
+// 削除やタイムラインの走査上限 (timelineScanLimit) と同じ妥協である。
+const profileBoostScanLimit = 200
+
+// myRecentBoosts は自分がブーストしたものを新しい順に最大 limit 件返す。
+func myRecentBoosts(ctx context.Context, limit int) ([]*activitystream.Object, error) {
+	entries, err := client.TakeObject(ctx, timelineKey, datastore.Inf, profileBoostScanLimit, datastore.Desc)
+	if err != nil && !errors.Is(err, datastore.ErrNotFound) {
+		return nil, err
+	}
+	boosts := make([]*activitystream.Object, 0, limit)
+	for _, act := range entries {
+		if act.Type != activitystream.AnnounceType || act.Actor.ID() != Config.ID() {
+			continue
+		}
+		boosts = append(boosts, act)
+		if len(boosts) >= limit {
+			break
+		}
+	}
+	return boosts, nil
+}
 
 func htmlUserHandler(w http.ResponseWriter, r *http.Request) httperror.HttpError {
 	ctx := r.Context()
@@ -85,12 +127,51 @@ func htmlUserHandler(w http.ResponseWriter, r *http.Request) httperror.HttpError
 	if err != nil {
 		return httperror.StatusInternalServerError("cannot read the outbox", err)
 	}
+	boosts, err := myRecentBoosts(ctx, profileStatusCount)
+	if err != nil {
+		return httperror.StatusInternalServerError("cannot read the boosts", err)
+	}
+
+	items := make([]profileStatusItem, 0, len(creates)+len(boosts))
 	// outbox に入っているのは Create なので、中身の Note を取り出す。
-	notes := make([]*activitystream.Object, 0, len(creates))
 	for _, c := range creates {
-		if note := c.Object.Item(); note != nil {
-			notes = append(notes, note)
+		note := c.Object.Item()
+		if note == nil {
+			continue
 		}
+		items = append(items, profileStatusItem{
+			Content:     note.Content,
+			Attachments: noteAttachments(note),
+			Published:   note.Published,
+			URL:         note.ID,
+			InReplyTo:   note.InReplyTo.ID(),
+			sortKey:     publishedTime(note.Published),
+		})
+	}
+	for _, act := range boosts {
+		note := act.Object.Item()
+		if note == nil {
+			continue
+		}
+		items = append(items, profileStatusItem{
+			Content:     note.Content,
+			Attachments: noteAttachments(note),
+			Published:   act.Published,
+			URL:         note.ID,
+			InReplyTo:   note.InReplyTo.ID(),
+			Boosted:     true,
+			AuthorName:  authorName(ctx, note.AttributedTo.ID()),
+			AuthorURI:   note.AttributedTo.ID(),
+			sortKey:     publishedTime(act.Published),
+		})
+	}
+	sort.SliceStable(items, func(i, j int) bool { return items[i].sortKey.After(items[j].sortKey) })
+	// もっと見るリンクの要否は自分の Note の件数だけで決める。投稿一覧
+	// ページ自体が自分の Note しか出さないため、ブーストの分を足すと
+	// 実際には出せない「その先」に誘ってしまう。
+	hasMore := len(creates) >= profileStatusCount
+	if len(items) > profileStatusCount {
+		items = items[:profileStatusCount]
 	}
 
 	page := profilePage{
@@ -101,15 +182,13 @@ func htmlUserHandler(w http.ResponseWriter, r *http.Request) httperror.HttpError
 		StatusCount:     total,
 		HideCollections: Config.HideCollections,
 		Fields:          profileFields(),
-		Statuses:        notes,
-		// 取れるだけ取れたなら、その先にもまだあると見なす。ちょうど
-		// profileStatusCount 件しか無いときに空の一覧へ誘ってしまうが、
-		// そのために全件を数え直すほどのことではない。
-		HasMore: len(notes) >= profileStatusCount,
+		Statuses:        items,
+		HasMore:         hasMore,
 	}
 	if !Config.HideCollections {
 		page.FollowerCount = countOrZero(ctx, datastore.KVFollowers)
 		page.FollowingCount = countOrZero(ctx, datastore.KVFollowing)
+		page.FavoriteCount = countOrZero(ctx, datastore.KVMyLikes)
 	}
 	return renderPage(w, "profile", page)
 }
@@ -126,11 +205,12 @@ func countOrZero(ctx context.Context, partition string) int {
 // --- 投稿一覧 ---------------------------------------------------------
 
 type statusesItem struct {
-	StatusID  int
-	Content   string
-	Published string
-	ObjectURI string
-	InReplyTo string
+	StatusID    int
+	Content     string
+	Attachments []attachmentItem
+	Published   string
+	ObjectURI   string
+	InReplyTo   string
 }
 
 type statusesPage struct {
@@ -185,11 +265,12 @@ func statusesHandler(w http.ResponseWriter, r *http.Request) httperror.HttpError
 			continue
 		}
 		items = append(items, statusesItem{
-			StatusID:  e.ID,
-			Content:   note.Content,
-			Published: note.Published,
-			ObjectURI: note.ID,
-			InReplyTo: note.InReplyTo.ID(),
+			StatusID:    e.ID,
+			Content:     note.Content,
+			Attachments: noteAttachments(note),
+			Published:   note.Published,
+			ObjectURI:   note.ID,
+			InReplyTo:   note.InReplyTo.ID(),
 		})
 	}
 
@@ -208,14 +289,20 @@ func statusesHandler(w http.ResponseWriter, r *http.Request) httperror.HttpError
 // statusesSlice は取ってきた分から該当ページを切り出し、次のページが
 // あるかどうかを返す。
 func statusesSlice(entries []datastore.Entry, skip, perPage int) ([]datastore.Entry, bool) {
-	if skip >= len(entries) {
+	return paginate(entries, skip, perPage)
+}
+
+// paginate は先頭から多めに取ってきたスライスから該当ページ分を切り出し、
+// 次のページがあるかどうかを返す。1件多く取っておくことで判定できる。
+func paginate[T any](items []T, skip, perPage int) ([]T, bool) {
+	if skip >= len(items) {
 		return nil, false
 	}
-	entries = entries[skip:]
-	if len(entries) > perPage {
-		return entries[:perPage], true
+	items = items[skip:]
+	if len(items) > perPage {
+		return items[:perPage], true
 	}
-	return entries, false
+	return items, false
 }
 
 // --- フォロワー / フォロー中の一覧 -----------------------------------
@@ -252,31 +339,101 @@ func htmlCollectionHandler(w http.ResponseWriter, r *http.Request, items []*data
 	return renderPage(w, "collection", page)
 }
 
+// --- いいね一覧 ---------------------------------------------------------
+
+func favoritesURI() string { return Config.ID() + "/favorites" }
+
+type favoriteItem struct {
+	ObjectURI  string
+	AuthorName string
+	AuthorURI  string
+	IconURL    string
+	Content    string
+	At         string
+}
+
+type favoritesPage struct {
+	pageBase
+	Items []favoriteItem
+}
+
+// favoritesHandler は自分がいいねした投稿の一覧。followers / following と
+// 同じく、ActivityPub の liked コレクションとして JSON でも、人間向けの
+// 一覧としても出す。HideCollections が立っていれば中身を出さない。
+func favoritesHandler(w http.ResponseWriter, r *http.Request) httperror.HttpError {
+	ctx := r.Context()
+	// 同じ URI が Accept によって JSON と HTML を返すので、キャッシュに
+	// 混ざらないよう Vary を付ける。
+	w.Header().Set("Vary", "Accept")
+
+	if Config.HideCollections {
+		if wantsActivityJSON(r) {
+			return respondAsJSON(w, http.StatusOK,
+				activitystream.NewOrderedCollection(favoritesURI(), 0, "", ""))
+		}
+		return renderPage(w, "favorites", favoritesPage{pageBase: newPageBase(r, Config.Name+" — いいね")})
+	}
+
+	items, err := client.QueryKV(ctx, datastore.KVMyLikes)
+	if err != nil {
+		return httperror.StatusInternalServerError("cannot list the favorites", err)
+	}
+	// KV は sk (対象投稿の URI) の辞書順でしか返らないため、いいねした順に
+	// 並べ直す。
+	sort.SliceStable(items, func(i, j int) bool { return items[i].At > items[j].At })
+
+	if wantsActivityJSON(r) {
+		ids := make([]string, 0, len(items))
+		for _, it := range items {
+			ids = append(ids, it.SK)
+		}
+		return respondAsJSON(w, http.StatusOK, activitystream.NewOrderedCollectionOfIDs(favoritesURI(), ids))
+	}
+
+	page := favoritesPage{
+		pageBase: newPageBase(r, Config.Name+" — いいね"),
+		Items:    make([]favoriteItem, 0, len(items)),
+	}
+	for _, it := range items {
+		page.Items = append(page.Items, favoriteItem{
+			ObjectURI:  it.SK,
+			AuthorName: it.Name,
+			AuthorURI:  it.TargetActor,
+			IconURL:    it.IconURL,
+			Content:    it.Content,
+			At:         it.At,
+		})
+	}
+	return renderPage(w, "favorites", page)
+}
+
 // --- 個別投稿 ---------------------------------------------------------
 
 type statusPage struct {
 	pageBase
-	Name      string
-	IconURL   string
-	Content   string
-	Published string
-	ObjectURI string
-	InReplyTo string
-	Excerpt   string
-	StatusID  int
+	Name        string
+	IconURL     string
+	Content     string
+	Attachments []attachmentItem
+	Published   string
+	ObjectURI   string
+	InReplyTo   string
+	Excerpt     string
+	StatusID    int
 }
 
 func htmlStatusHandler(w http.ResponseWriter, r *http.Request, id int, note *activitystream.Object) httperror.HttpError {
 	page := statusPage{
-		pageBase:  newPageBase(r, Config.Name+": "+excerpt(note.Content, 40)),
-		Name:      Config.Name,
-		IconURL:   Config.IconURI,
-		Content:   note.Content,
-		Published: note.Published,
-		ObjectURI: note.ID,
-		InReplyTo: note.InReplyTo.ID(),
-		Excerpt:   excerpt(note.Content, 140),
-		StatusID:  id,
+		pageBase:    newPageBase(r, Config.Name+": "+excerpt(note.Content, 40)),
+		Name:        Config.Name,
+		IconURL:     Config.IconURI,
+		Content:     note.Content,
+		Attachments: noteAttachments(note),
+		Published:   note.Published,
+		ObjectURI:   note.ID,
+		InReplyTo:   note.InReplyTo.ID(),
+		Excerpt:     excerpt(note.Content, 140),
+		StatusID:    id,
 	}
 	return renderPage(w, "status", page)
 }
@@ -366,6 +523,10 @@ type timelineItem struct {
 	// 書いた人とブーストした人が別なので、著者とは分けて持つ。
 	BoostedByName string
 	BoostedByURI  string
+	// Liked / Boosted は自分が既にいいね・ブースト済みかどうか。ボタンの
+	// 出し分けに使う。
+	Liked   bool
+	Boosted bool
 	// sortKey は並べ替え用。published を解釈できたものはその時刻、
 	// 解釈できなければゼロ値。
 	sortKey time.Time
@@ -376,8 +537,11 @@ type timelinePage struct {
 	Items          []timelineItem
 	InReplyTo      string
 	MentionPrefill string
-	// FollowPrefill は authorize_interaction から来たときに埋まる。
-	FollowPrefill string
+	Page           int
+	PrevPage       int
+	NextPage       int
+	HasPrev        bool
+	HasNext        bool
 }
 
 const timelinePageSize = 40
@@ -396,16 +560,31 @@ func publishedTime(s string) time.Time {
 func timelineHandler(w http.ResponseWriter, r *http.Request) httperror.HttpError {
 	ctx := r.Context()
 
+	pageNum, err := intParam(r, "page", 1)
+	if err != nil {
+		return httperror.StatusUnprocessableEntity("bad page", err)
+	}
+	if pageNum < 1 {
+		return httperror.StatusUnprocessableEntity("page must be 1 or greater", nil)
+	}
+	take, skip := statusesRange(pageNum, timelinePageSize)
+
 	// 受信したものと自分の投稿を混ぜる。Mastodon のホームタイムラインも
 	// 自分の投稿を含む。自分自身をフォローするような裏技は要らない。
-	received, err := client.TakeObject(ctx, timelineKey, datastore.Inf, timelinePageSize, datastore.Desc)
+	// 2つの連番は別物で、時刻でマージした後にしか順序が確定しないため、
+	// 深いページを出すにはどちらの取得件数も take まで増やす必要がある
+	// （statusesRange と同じ「多めに取って捨てる」方式。詳細はそちらの
+	// コメントを参照）。
+	received, err := client.TakeObject(ctx, timelineKey, datastore.Inf, take, datastore.Desc)
 	if err != nil && !errors.Is(err, datastore.ErrNotFound) {
 		return httperror.StatusInternalServerError("cannot read the timeline", err)
 	}
-	mine, err := client.TakeObject(ctx, outboxKey, datastore.Inf, timelinePageSize, datastore.Desc)
+	mine, err := client.TakeObject(ctx, outboxKey, datastore.Inf, take, datastore.Desc)
 	if err != nil && !errors.Is(err, datastore.ErrNotFound) {
 		return httperror.StatusInternalServerError("cannot read the outbox", err)
 	}
+
+	reactions := loadReactionState(ctx)
 
 	items := make([]timelineItem, 0, len(received)+len(mine))
 	for _, act := range append(append([]*activitystream.Object{}, received...), mine...) {
@@ -434,6 +613,8 @@ func timelineHandler(w http.ResponseWriter, r *http.Request) httperror.HttpError
 			ObjectURI:   note.ID,
 			InReplyTo:   note.InReplyTo.ID(),
 			Mine:        isMine,
+			Liked:       reactions.liked[note.ID],
+			Boosted:     reactions.boosted[note.ID],
 			sortKey:     publishedTime(published),
 		}
 		// authorName / cachedIconURL は自分の分も設定から返す。
@@ -455,19 +636,21 @@ func timelineHandler(w http.ResponseWriter, r *http.Request) httperror.HttpError
 	sort.SliceStable(items, func(i, j int) bool {
 		return items[i].sortKey.After(items[j].sortKey)
 	})
-	if len(items) > timelinePageSize {
-		items = items[:timelinePageSize]
-	}
+	items, hasNext := paginate(items, skip, timelinePageSize)
 
 	page := timelinePage{
 		pageBase:  newPageBase(r, "タイムライン"),
 		Items:     items,
 		InReplyTo: r.URL.Query().Get("in_reply_to"),
+		Page:      pageNum,
+		PrevPage:  pageNum - 1,
+		NextPage:  pageNum + 1,
+		HasPrev:   pageNum > 1,
+		HasNext:   hasNext,
 	}
 	page.UnreadCount = len(unreadNotifications(ctx))
 	// 返信リンクから来たときは mention 先を埋めておく。
 	page.MentionPrefill = r.URL.Query().Get("mentions")
-	page.FollowPrefill = r.URL.Query().Get("follow")
 	// 認証必須のページなので検索避けする。
 	page.NoIndex = true
 	return renderPage(w, "timeline", page)

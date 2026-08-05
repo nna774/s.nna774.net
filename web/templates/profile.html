@@ -18,16 +18,35 @@
       {{if not .HideCollections}}
         ・ <a href="/u/{{.LocalPart}}/followers">フォロワー <b>{{.FollowerCount}}</b></a>
         ・ <a href="/u/{{.LocalPart}}/following">フォロー <b>{{.FollowingCount}}</b></a>
+        ・ <a href="/u/{{.LocalPart}}/favorites">いいね <b>{{.FavoriteCount}}</b></a>
       {{end}}
     </div>
   </div>
 </div>
 
+<hr>
+
 {{if .Statuses}}
   {{range .Statuses}}
     <article>
-      {{with .InReplyTo.ID}}<div class="reply-to">返信: <a href="{{.}}">{{.}}</a></div>{{end}}
+      {{if .Boosted}}
+        <div class="boosted"><a href="/remote?actor={{.AuthorURI}}">{{.AuthorName}}</a> の投稿をブースト</div>
+      {{end}}
+      {{with .InReplyTo}}<div class="reply-to">返信: <a href="{{.}}">{{.}}</a></div>{{end}}
       <div class="body">{{sanitize .Content}}</div>
+      {{if .Attachments}}
+        <div class="attachments">
+          {{range .Attachments}}
+            {{if eq .Kind "image"}}
+              <img src="{{.URL}}" alt="{{.Name}}" loading="lazy">
+            {{else if eq .Kind "video"}}
+              <video src="{{.URL}}" controls></video>
+            {{else}}
+              <a href="{{.URL}}" target="_blank" rel="noopener noreferrer">添付ファイル</a>
+            {{end}}
+          {{end}}
+        </div>
+      {{end}}
       <div class="meta">
         <a href="{{.URL}}">{{datetime .Published}}</a>
       </div>

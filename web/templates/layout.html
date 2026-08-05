@@ -39,11 +39,12 @@ article .body p { margin: .4rem 0; }
 article .attachments { display: flex; flex-wrap: wrap; gap: .5rem; margin-top: .5rem; }
 article .attachments img, article .attachments video { max-width: 100%; max-height: 20rem;
   border-radius: .5rem; object-fit: contain; }
-article .meta { font-size: .8rem; color: var(--dim); margin-top: .4rem; display: flex; gap: .75rem; }
+article .meta { font-size: .8rem; color: var(--dim); margin-top: .4rem; display: flex; gap: .75rem; flex-wrap: wrap; }
 form.compose { border: 1px solid var(--line); border-radius: .5rem; padding: 1rem; margin-bottom: 2rem; }
 form.compose textarea { width: 100%; min-height: 5rem; padding: .5rem; font: inherit; resize: vertical;
   background: var(--bg); color: var(--fg); border: 1px solid var(--line); border-radius: .25rem; }
 form.compose .row { display: flex; gap: .5rem; align-items: center; margin-top: .5rem; flex-wrap: wrap; }
+form.compose .row .post-submit { margin-left: auto; }
 form.compose input[type=text] { flex: 1 1 12rem; min-width: 0; padding: .4rem; font: inherit;
   background: var(--bg); color: var(--fg); border: 1px solid var(--line); border-radius: .25rem; }
 select, button { font: inherit; padding: .4rem .6rem; border-radius: .25rem; border: 1px solid var(--line);
@@ -110,12 +111,108 @@ function deleteStatus(e, statusId, localPart) {
     .catch(() => alert('削除に失敗しました'));
 }
 
+function followActor(e, actorURI, localPart) {
+  e.preventDefault();
+  fetch('/u/' + localPart + '/following', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ actor: actorURI }),
+  })
+    .then(r => r.ok ? renderFollowStatus('pending', actorURI, localPart) : alert('フォロー申請に失敗しました'))
+    .catch(() => alert('フォロー申請に失敗しました'));
+}
+
+// 通知一覧の「フォローを返す」。同じページに複数の通知が並ぶので
+// #follow-status のような単一 id には頼れず、押されたボタン自体を
+// 差し替える。
+function followBack(e, actorURI, localPart) {
+  e.preventDefault();
+  var btn = e.currentTarget;
+  fetch('/u/' + localPart + '/following', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ actor: actorURI }),
+  })
+    .then(r => {
+      if (!r.ok) throw new Error();
+      var span = document.createElement('span');
+      span.textContent = 'フォロー申請中';
+      btn.replaceWith(span);
+    })
+    .catch(() => alert('フォロー申請に失敗しました'));
+}
+
 function unfollowActor(e, actorURI, localPart) {
   e.preventDefault();
   if (!confirm('フォローを解除する。よいか')) return;
   fetch('/u/' + localPart + '/following?actor=' + encodeURIComponent(actorURI), { method: 'DELETE' })
-    .then(r => r.ok ? location.reload() : alert('フォロー解除に失敗しました'))
+    .then(r => r.ok ? renderFollowStatus('none', actorURI, localPart) : alert('フォロー解除に失敗しました'))
     .catch(() => alert('フォロー解除に失敗しました'));
+}
+
+// /remote の #follow-status の中身を、画面遷移せずにボタンの状態だけ
+// 差し替える。innerHTML への文字列連結は actorURI (外部 actor 由来) を
+// 埋め込むことになり XSS の危険があるため、必ず DOM API で組み立てる。
+function renderFollowStatus(state, actorURI, localPart) {
+  var el = document.getElementById('follow-status');
+  if (!el) return;
+  el.textContent = '';
+  if (state === 'none') {
+    var btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'primary';
+    btn.textContent = 'フォロー';
+    btn.addEventListener('click', function (e) { followActor(e, actorURI, localPart); });
+    el.appendChild(btn);
+    return;
+  }
+  el.appendChild(document.createTextNode('フォロー申請中 ・ '));
+  var undo = document.createElement('a');
+  undo.href = '#';
+  undo.textContent = '取り消す';
+  undo.addEventListener('click', function (e) { unfollowActor(e, actorURI, localPart); });
+  el.appendChild(undo);
+}
+
+function postReaction(path, object, actor) {
+  return fetch(path, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: 'object=' + encodeURIComponent(object) + '&actor=' + encodeURIComponent(actor),
+  });
+}
+
+function deleteReaction(path, object) {
+  return fetch(path + '?object=' + encodeURIComponent(object), { method: 'DELETE' });
+}
+
+function likeStatus(e, object, actor, localPart) {
+  e.preventDefault();
+  postReaction('/u/' + localPart + '/likes', object, actor)
+    .then(r => r.ok ? location.reload() : alert('いいねに失敗しました'))
+    .catch(() => alert('いいねに失敗しました'));
+}
+
+function unlikeStatus(e, object, localPart) {
+  e.preventDefault();
+  deleteReaction('/u/' + localPart + '/likes', object)
+    .then(r => r.ok ? location.reload() : alert('取り消しに失敗しました'))
+    .catch(() => alert('取り消しに失敗しました'));
+}
+
+function boostStatus(e, object, actor, localPart) {
+  e.preventDefault();
+  if (!confirm('この投稿をブーストする。よいか')) return;
+  postReaction('/u/' + localPart + '/boosts', object, actor)
+    .then(r => r.ok ? location.reload() : alert('ブーストに失敗しました'))
+    .catch(() => alert('ブーストに失敗しました'));
+}
+
+function unboostStatus(e, object, localPart) {
+  e.preventDefault();
+  deleteReaction('/u/' + localPart + '/boosts', object)
+    .then(r => r.ok ? location.reload() : alert('取り消しに失敗しました'))
+    .catch(() => alert('取り消しに失敗しました'));
 }
 </script>
 </body>

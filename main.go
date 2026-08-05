@@ -156,12 +156,19 @@ func profileFields() activitystream.Objects {
 func jsonUserHander(w http.ResponseWriter, r *http.Request) httperror.HttpError {
 	resp := activitystream.NewUserResource(
 		Config.ID(), Config.Name, Config.IconURI, Config.IconMediaType(), Config.LocalPart(), inboxURI(), outboxURI(), followersURI(), followingURI(), Config.Summary, mainKeyURI(), Config.PublicKey(), profileFields())
+	// followers / following と同じく、中身を出すかは favoritesHandler 側で
+	// HideCollections を見て判断する。URI 自体は常に広告してよい。
+	resp.Liked = favoritesURI()
 	return respondAsJSON(w, http.StatusOK, resp)
 }
 
 // wantsActivityJSON は ActivityPub のクライアントかブラウザかを判定する。
 // 以前は Accept に "json" が含まれるかという雑な判定だった。
+// URL が .json で終わる場合も JSON を要求しているとみなす。
 func wantsActivityJSON(r *http.Request) bool {
+	if strings.HasSuffix(r.URL.Path, ".json") {
+		return true
+	}
 	accept := strings.ToLower(r.Header.Get("Accept"))
 	for _, t := range []string{"application/activity+json", "application/ld+json", "application/json"} {
 		if strings.Contains(accept, t) {
@@ -329,9 +336,7 @@ func indexHandler(w http.ResponseWriter, r *http.Request) httperror.HttpError {
 	if r.URL.Path != "/" {
 		return httperror.StatusNotFound("", nil)
 	}
-	w.WriteHeader(http.StatusOK)
-	w.Write([]byte("hello"))
-	log.Printf("called with %+v", r)
+	http.Redirect(w, r, "/u/nana", http.StatusMovedPermanently)
 	return nil
 }
 
@@ -350,6 +355,21 @@ func saveToOutbox(ctx context.Context, id int, create *activitystream.Object) er
 	}
 	_, err := client.Inc(ctx, outboxKey)
 	return err
+}
+
+// stripJSONSuffixHandler は http.Handler レベルで URL の .json 拡張子を除去する。
+// ルーティング前に実行されるため、httprouter で正しくマッチングされるようになる。
+// .json 拡張子がある場合は Accept ヘッダを application/activity+json に設定する。
+type stripJSONSuffixHandler struct {
+	handler http.Handler
+}
+
+func (h *stripJSONSuffixHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	if strings.HasSuffix(r.URL.Path, ".json") {
+		r.URL.Path = strings.TrimSuffix(r.URL.Path, ".json")
+		r.Header.Set("Accept", "application/activity+json")
+	}
+	h.handler.ServeHTTP(w, r)
 }
 
 // pub は認証を掛けないエンドポイントを登録する。連合が依存するものは
@@ -381,6 +401,7 @@ func newRouter() *httprouter.Router {
 	pub(r, http.MethodGet, "/u/:user/status/:id", statusHandler)
 	pub(r, http.MethodGet, "/u/:user/followers", collectionHandler(datastore.KVFollowers, followersURI, "フォロワー"))
 	pub(r, http.MethodGet, "/u/:user/following", collectionHandler(datastore.KVFollowing, followingURI, "フォロー中"))
+	pub(r, http.MethodGet, "/u/:user/favorites", favoritesHandler)
 
 	pub(r, http.MethodGet, "/.well-known/webfinger", webfingerHandler)
 	pub(r, http.MethodGet, "/.well-known/host-meta", hostMetaHandler)
@@ -404,6 +425,10 @@ func newRouter() *httprouter.Router {
 	priv(r, http.MethodDelete, "/u/:user/status/:id", true, deleteStatusHandler)
 	priv(r, http.MethodPost, "/u/:user/following", true, followRequestHandler)
 	priv(r, http.MethodDelete, "/u/:user/following", true, unfollowRequestHandler)
+	priv(r, http.MethodPost, "/u/:user/likes", true, likeRequestHandler)
+	priv(r, http.MethodDelete, "/u/:user/likes", true, unlikeRequestHandler)
+	priv(r, http.MethodPost, "/u/:user/boosts", true, boostRequestHandler)
+	priv(r, http.MethodDelete, "/u/:user/boosts", true, unboostRequestHandler)
 
 	return r
 }
@@ -414,10 +439,11 @@ func main() {
 	}
 
 	r := newRouter()
+	h := &stripJSONSuffixHandler{handler: r}
 
 	if config.IsDevelopment() {
-		http.ListenAndServe("localhost:8080", r)
+		http.ListenAndServe("localhost:8080", h)
 	} else {
-		algnhsa.ListenAndServe(r, &algnhsa.Options{RequestType: algnhsa.RequestTypeAPIGatewayV1})
+		algnhsa.ListenAndServe(h, &algnhsa.Options{RequestType: algnhsa.RequestTypeAPIGatewayV1})
 	}
 }

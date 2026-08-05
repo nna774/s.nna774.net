@@ -49,11 +49,15 @@ type Config struct {
 	// SessionSecretParameter は Cookie 署名用の HMAC 鍵。API トークンとは
 	// 別に持つことで、鍵を差し替えるだけで全セッションを失効させられる。
 	SessionSecretParameter string `yaml:"session_secret_parameter"`
+	// GyazoAccessTokenParameter は画像投稿で使う Gyazo API のアクセス
+	// トークン。空なら画像投稿機能は無効。
+	GyazoAccessTokenParameter string `yaml:"gyazo_access_token_parameter"`
 
-	privateKey    *rsa.PrivateKey
-	publicKey     string
-	apiToken      string
-	sessionSecret string
+	privateKey       *rsa.PrivateKey
+	publicKey        string
+	apiToken         string
+	sessionSecret    string
+	gyazoAccessToken string
 }
 
 // Field はプロフィールの1項目。Value が http(s) の URL のときはリンクに
@@ -87,11 +91,13 @@ func (c *Config) PrivateKey() *rsa.PrivateKey { return c.privateKey }
 func (c *Config) PublicKey() string           { return c.publicKey }
 func (c *Config) APIToken() string            { return c.apiToken }
 func (c *Config) SessionSecret() string       { return c.sessionSecret }
+func (c *Config) GyazoAccessToken() string    { return c.gyazoAccessToken }
 
 // 開発時の秘密情報は環境変数で渡す。SSM を引かずに動かせるようにする。
 const (
-	devAPITokenEnv      = "API_TOKEN"
-	devSessionSecretEnv = "SESSION_SECRET"
+	devAPITokenEnv         = "API_TOKEN"
+	devSessionSecretEnv    = "SESSION_SECRET"
+	devGyazoAccessTokenEnv = "GYAZO_ACCESS_TOKEN"
 )
 
 func (c *Config) loadSecrets(ctx context.Context, region string) error {
@@ -106,15 +112,16 @@ func (c *Config) loadSecrets(ctx context.Context, region string) error {
 		if err := c.setPrivateKey(buf); err != nil {
 			return err
 		}
-		c.apiToken = os.Getenv(devAPITokenEnv)
-		c.sessionSecret = os.Getenv(devSessionSecretEnv)
+		c.apiToken = strings.TrimSpace(os.Getenv(devAPITokenEnv))
+		c.sessionSecret = strings.TrimSpace(os.Getenv(devSessionSecretEnv))
+		c.gyazoAccessToken = strings.TrimSpace(os.Getenv(devGyazoAccessTokenEnv))
 		return nil
 	}
 
 	if c.PrivateKeyParameter == "" {
 		return errors.New("private_key_parameter is required")
 	}
-	// 3本まとめて1回の API 呼び出しで引く。コールドスタートで叩く KMS の
+	// まとめて1回の API 呼び出しで引く。コールドスタートで叩く KMS の
 	// 回数を抑えられる。
 	names := []string{c.PrivateKeyParameter}
 	if c.APITokenParameter != "" {
@@ -123,6 +130,9 @@ func (c *Config) loadSecrets(ctx context.Context, region string) error {
 	if c.SessionSecretParameter != "" {
 		names = append(names, c.SessionSecretParameter)
 	}
+	if c.GyazoAccessTokenParameter != "" {
+		names = append(names, c.GyazoAccessTokenParameter)
+	}
 	params, err := fetchParameters(ctx, region, names...)
 	if err != nil {
 		return err
@@ -130,8 +140,13 @@ func (c *Config) loadSecrets(ctx context.Context, region string) error {
 	if err := c.setPrivateKey([]byte(params[c.PrivateKeyParameter])); err != nil {
 		return err
 	}
-	c.apiToken = params[c.APITokenParameter]
-	c.sessionSecret = params[c.SessionSecretParameter]
+	// SSM に登録するとき --value file://... で末尾改行付きのファイルを
+	// そのまま渡してしまうと、トークンの末尾に "\n" が混入する。API に
+	// 渡すと本体は合っているのに認証だけ落ちる、気づきにくい壊れ方をする
+	// ため、ここで trim しておく。
+	c.apiToken = strings.TrimSpace(params[c.APITokenParameter])
+	c.sessionSecret = strings.TrimSpace(params[c.SessionSecretParameter])
+	c.gyazoAccessToken = strings.TrimSpace(params[c.GyazoAccessTokenParameter])
 	return nil
 }
 
