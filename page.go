@@ -531,8 +531,6 @@ type timelinePage struct {
 	Items          []timelineItem
 	InReplyTo      string
 	MentionPrefill string
-	// FollowPrefill は authorize_interaction から来たときに埋まる。
-	FollowPrefill string
 }
 
 const timelinePageSize = 40
@@ -626,7 +624,6 @@ func timelineHandler(w http.ResponseWriter, r *http.Request) httperror.HttpError
 	page.UnreadCount = len(unreadNotifications(ctx))
 	// 返信リンクから来たときは mention 先を埋めておく。
 	page.MentionPrefill = r.URL.Query().Get("mentions")
-	page.FollowPrefill = r.URL.Query().Get("follow")
 	// 認証必須のページなので検索避けする。
 	page.NoIndex = true
 	return renderPage(w, "timeline", page)
