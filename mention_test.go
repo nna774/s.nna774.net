@@ -108,6 +108,25 @@ func TestRenderContentLinkifiesURLs(t *testing.T) {
 	}
 }
 
+// javascript: などの危険なスキームは、http(s):// で始まらない限りマッチ
+// しないのでリンク化されない。href に javascript: が紛れ込む経路がないか
+// の回帰テスト。
+func TestRenderContentDoesNotLinkifyDangerousSchemes(t *testing.T) {
+	for _, in := range []string{
+		"javascript:alert(1)",
+		"javascript://alert(1)",
+		"data:text/html,<script>alert(1)</script>",
+		"vbscript:msgbox(1)",
+	} {
+		t.Run(in, func(t *testing.T) {
+			got := renderContent(in, nil)
+			if strings.Contains(got, "<a ") {
+				t.Errorf("renderContent(%q) linkified a dangerous scheme: %q", in, got)
+			}
+		})
+	}
+}
+
 // URL の中に @user@host らしき文字列が来ても、メンションリンクの href の
 // 中身を二重にリンクにしてはいけない。
 func TestRenderContentDoesNotDoubleLinkMentionHref(t *testing.T) {
