@@ -9,6 +9,13 @@ Resources:
       Domain:
         CertificateArn: arn:aws:acm:ap-northeast-1:486414336274:certificate/0c2a64fd-0793-4975-b418-c1596e14c5c0
         DomainName: s.nna774.net
+      # 未設定だとバイナリボディ (multipart/form-data の画像添付など) が
+      # API Gateway で UTF-8 テキストとして扱われ、Lambda に届く前にバイト
+      # 列が壊れる。algnhsa はどちらの場合も isBase64Encoded を見て
+      # 適切に扱えるので、'*/*' にして全リクエストをバイナリ (base64)
+      # 経由にする。
+      BinaryMediaTypes:
+        - "*/*"
   Function:
     Type: AWS::Serverless::Function
     Properties:

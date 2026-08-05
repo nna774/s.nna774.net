@@ -444,6 +444,13 @@ func main() {
 	if config.IsDevelopment() {
 		http.ListenAndServe("localhost:8080", h)
 	} else {
-		algnhsa.ListenAndServe(h, &algnhsa.Options{RequestType: algnhsa.RequestTypeAPIGatewayV1})
+		// template.yml の ApiGateway.BinaryMediaTypes を '*/*' にして
+		// あるので、API Gateway はレスポンスの isBase64Encoded を無条件で
+		// 見て base64 デコードしてくる。ここで '*/*' を指定して常に
+		// base64 で返さないと、HTML/JSON まで含めた全レスポンスが壊れる。
+		algnhsa.ListenAndServe(h, &algnhsa.Options{
+			RequestType:        algnhsa.RequestTypeAPIGatewayV1,
+			BinaryContentTypes: []string{"*/*"},
+		})
 	}
 }
