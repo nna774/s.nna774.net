@@ -112,9 +112,9 @@ func (c *Config) loadSecrets(ctx context.Context, region string) error {
 		if err := c.setPrivateKey(buf); err != nil {
 			return err
 		}
-		c.apiToken = os.Getenv(devAPITokenEnv)
-		c.sessionSecret = os.Getenv(devSessionSecretEnv)
-		c.gyazoAccessToken = os.Getenv(devGyazoAccessTokenEnv)
+		c.apiToken = strings.TrimSpace(os.Getenv(devAPITokenEnv))
+		c.sessionSecret = strings.TrimSpace(os.Getenv(devSessionSecretEnv))
+		c.gyazoAccessToken = strings.TrimSpace(os.Getenv(devGyazoAccessTokenEnv))
 		return nil
 	}
 
@@ -140,9 +140,13 @@ func (c *Config) loadSecrets(ctx context.Context, region string) error {
 	if err := c.setPrivateKey([]byte(params[c.PrivateKeyParameter])); err != nil {
 		return err
 	}
-	c.apiToken = params[c.APITokenParameter]
-	c.sessionSecret = params[c.SessionSecretParameter]
-	c.gyazoAccessToken = params[c.GyazoAccessTokenParameter]
+	// SSM に登録するとき --value file://... で末尾改行付きのファイルを
+	// そのまま渡してしまうと、トークンの末尾に "\n" が混入する。API に
+	// 渡すと本体は合っているのに認証だけ落ちる、気づきにくい壊れ方をする
+	// ため、ここで trim しておく。
+	c.apiToken = strings.TrimSpace(params[c.APITokenParameter])
+	c.sessionSecret = strings.TrimSpace(params[c.SessionSecretParameter])
+	c.gyazoAccessToken = strings.TrimSpace(params[c.GyazoAccessTokenParameter])
 	return nil
 }
 
