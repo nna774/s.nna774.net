@@ -17,6 +17,16 @@ import (
 // 入らず、相手に何も届かない。
 var mentionPattern = regexp.MustCompile(`@([A-Za-z0-9_]+(?:[.\-][A-Za-z0-9_]+)*)@([A-Za-z0-9]([A-Za-z0-9\-]*[A-Za-z0-9])?(?:\.[A-Za-z0-9]([A-Za-z0-9\-]*[A-Za-z0-9])?)+)`)
 
+// urlPattern は本文中の http(s) URL を拾う。RFC3986 の url-safe な文字集合
+// のうち代表的なものだけを許可する。ぷにこーど等の対応はしない。
+var urlPattern = regexp.MustCompile(`https?://[-A-Za-z0-9._~:/?#\[\]@!$&'()*+,;=%]+`)
+
+// urlTrailingCutset は URL の末尾から切り離す約物。文末にそのまま URL を
+// 書くと句読点や閉じ括弧まで URL に含めて拾ってしまうため。コロンと
+// セミコロンは含めない。ポート番号や、エスケープで生まれた "&amp;" の
+// ";" まで削ってしまうため。
+const urlTrailingCutset = ".,!?)]}、。」』"
+
 type mention struct {
 	// Handle は @user@host の表記。
 	Handle string
@@ -77,10 +87,15 @@ func handleFor(ctx context.Context, input, actorURI string) string {
 // renderContent は入力の平文を ActivityStreams の content にする。
 //
 // content は HTML である。平文をそのまま入れると改行が失われ、"<" などが
-// 相手側で壊れる。エスケープしてからメンションをリンクにし、段落に組む。
-// 順序を逆にすると、エスケープでリンクの山括弧まで潰れる。
+// 相手側で壊れる。エスケープしてから URL・メンションをリンクにし、段落に
+// 組む。順序を逆にすると、エスケープでリンクの山括弧まで潰れる。
+//
+// URL のリンク化はメンションより先に行う。逆にすると、メンションリンクの
+// href に入った actor URI（httpから始まる）をもう一度 URL として拾って
+// 二重にリンクを差し込んでしまう。
 func renderContent(text string, mentions []mention) string {
 	escaped := html.EscapeString(strings.ReplaceAll(text, "\r\n", "\n"))
+	escaped = linkifyURLs(escaped)
 
 	// 正規表現で1回だけ走査して置換する。ハンドルごとに
 	// strings.ReplaceAll を繰り返すと、挿入したリンクの中に含まれる
@@ -117,6 +132,20 @@ func renderContent(text string, mentions []mention) string {
 		return "<p></p>"
 	}
 	return b.String()
+}
+
+// linkifyURLs は本文中の URL をリンクにする。エスケープ済みの文字列に
+// 対して呼ぶこと。エスケープ前だと "&" が3文字（&amp;）に膨らんだ後の
+// 位置がずれる。
+func linkifyURLs(escaped string) string {
+	return urlPattern.ReplaceAllStringFunc(escaped, func(u string) string {
+		trimmed := strings.TrimRight(u, urlTrailingCutset)
+		if trimmed == "" {
+			return u
+		}
+		rest := u[len(trimmed):]
+		return fmt.Sprintf(`<a href="%s">%s</a>`, trimmed, trimmed) + rest
+	})
 }
 
 // mentionTags は content に載せる Mention タグを組む。

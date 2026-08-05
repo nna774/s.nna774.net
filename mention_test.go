@@ -62,6 +62,63 @@ func TestRenderContentEscapesAndParagraphs(t *testing.T) {
 	}
 }
 
+// 自分の投稿に書いた URL はリンクになってほしい。
+func TestRenderContentLinkifiesURLs(t *testing.T) {
+	for _, tt := range []struct {
+		name string
+		in   string
+		want string
+	}{
+		{
+			"単独",
+			"https://s.nna774.net/u/nana",
+			`<p><a href="https://s.nna774.net/u/nana">https://s.nna774.net/u/nana</a></p>`,
+		},
+		{
+			"文中",
+			"見て https://s.nna774.net/u/nana これ",
+			`<p>見て <a href="https://s.nna774.net/u/nana">https://s.nna774.net/u/nana</a> これ</p>`,
+		},
+		{
+			"文末の句点はURLに含めない",
+			"見て。https://s.nna774.net/u/nana。",
+			`<p>見て。<a href="https://s.nna774.net/u/nana">https://s.nna774.net/u/nana</a>。</p>`,
+		},
+		{
+			"括弧に包んだ場合は閉じ括弧を含めない",
+			"(https://s.nna774.net/u/nana)",
+			`<p>(<a href="https://s.nna774.net/u/nana">https://s.nna774.net/u/nana</a>)</p>`,
+		},
+		{
+			"クエリのアンパサンドはエスケープされたまま保持する",
+			"https://example.com/?a=1&b=2",
+			`<p><a href="https://example.com/?a=1&amp;b=2">https://example.com/?a=1&amp;b=2</a></p>`,
+		},
+		{
+			"http も拾う",
+			"http://example.com",
+			`<p><a href="http://example.com">http://example.com</a></p>`,
+		},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := renderContent(tt.in, nil); got != tt.want {
+				t.Errorf("renderContent(%q) = %q, want %q", tt.in, got, tt.want)
+			}
+		})
+	}
+}
+
+// URL の中に @user@host らしき文字列が来ても、メンションリンクの href の
+// 中身を二重にリンクにしてはいけない。
+func TestRenderContentDoesNotDoubleLinkMentionHref(t *testing.T) {
+	ms := []mention{{Handle: "@kugayama@pawoo.net", ActorURI: "https://pawoo.net/users/kugayama"}}
+	got := renderContent("@kugayama@pawoo.net", ms)
+
+	if strings.Count(got, "<a ") != 1 {
+		t.Errorf("expected exactly one link, got: %s", got)
+	}
+}
+
 func TestRenderContentLinkifiesMentions(t *testing.T) {
 	ms := []mention{{Handle: "@kugayama@pawoo.net", ActorURI: "https://pawoo.net/users/kugayama"}}
 	got := renderContent("やあ @kugayama@pawoo.net", ms)
