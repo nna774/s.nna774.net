@@ -77,10 +77,11 @@ type profilePage struct {
 // profileStatusItem はプロフィールに並べる1件分。自分の投稿とブーストを
 // 混ぜて表示時刻順に並べるため、生の Note ではなくこちらに落とす。
 type profileStatusItem struct {
-	Content   string
-	Published string
-	URL       string
-	InReplyTo string
+	Content     string
+	Attachments []attachmentItem
+	Published   string
+	URL         string
+	InReplyTo   string
 	// Boosted / AuthorName / AuthorURI は自分がブーストした他人の投稿の
 	// ときだけ入る。
 	Boosted    bool
@@ -139,11 +140,12 @@ func htmlUserHandler(w http.ResponseWriter, r *http.Request) httperror.HttpError
 			continue
 		}
 		items = append(items, profileStatusItem{
-			Content:   note.Content,
-			Published: note.Published,
-			URL:       note.ID,
-			InReplyTo: note.InReplyTo.ID(),
-			sortKey:   publishedTime(note.Published),
+			Content:     note.Content,
+			Attachments: noteAttachments(note),
+			Published:   note.Published,
+			URL:         note.ID,
+			InReplyTo:   note.InReplyTo.ID(),
+			sortKey:     publishedTime(note.Published),
 		})
 	}
 	for _, act := range boosts {
@@ -152,14 +154,15 @@ func htmlUserHandler(w http.ResponseWriter, r *http.Request) httperror.HttpError
 			continue
 		}
 		items = append(items, profileStatusItem{
-			Content:    note.Content,
-			Published:  act.Published,
-			URL:        note.ID,
-			InReplyTo:  note.InReplyTo.ID(),
-			Boosted:    true,
-			AuthorName: authorName(ctx, note.AttributedTo.ID()),
-			AuthorURI:  note.AttributedTo.ID(),
-			sortKey:    publishedTime(act.Published),
+			Content:     note.Content,
+			Attachments: noteAttachments(note),
+			Published:   act.Published,
+			URL:         note.ID,
+			InReplyTo:   note.InReplyTo.ID(),
+			Boosted:     true,
+			AuthorName:  authorName(ctx, note.AttributedTo.ID()),
+			AuthorURI:   note.AttributedTo.ID(),
+			sortKey:     publishedTime(act.Published),
 		})
 	}
 	sort.SliceStable(items, func(i, j int) bool { return items[i].sortKey.After(items[j].sortKey) })
@@ -202,11 +205,12 @@ func countOrZero(ctx context.Context, partition string) int {
 // --- 投稿一覧 ---------------------------------------------------------
 
 type statusesItem struct {
-	StatusID  int
-	Content   string
-	Published string
-	ObjectURI string
-	InReplyTo string
+	StatusID    int
+	Content     string
+	Attachments []attachmentItem
+	Published   string
+	ObjectURI   string
+	InReplyTo   string
 }
 
 type statusesPage struct {
@@ -261,11 +265,12 @@ func statusesHandler(w http.ResponseWriter, r *http.Request) httperror.HttpError
 			continue
 		}
 		items = append(items, statusesItem{
-			StatusID:  e.ID,
-			Content:   note.Content,
-			Published: note.Published,
-			ObjectURI: note.ID,
-			InReplyTo: note.InReplyTo.ID(),
+			StatusID:    e.ID,
+			Content:     note.Content,
+			Attachments: noteAttachments(note),
+			Published:   note.Published,
+			ObjectURI:   note.ID,
+			InReplyTo:   note.InReplyTo.ID(),
 		})
 	}
 
