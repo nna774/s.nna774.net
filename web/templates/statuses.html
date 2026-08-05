@@ -6,6 +6,19 @@
     <article>
       {{with .InReplyTo}}<div class="reply-to">返信: <a href="{{.}}">{{.}}</a></div>{{end}}
       <div class="body">{{sanitize .Content}}</div>
+      {{if .Attachments}}
+        <div class="attachments">
+          {{range .Attachments}}
+            {{if eq .Kind "image"}}
+              <img src="{{.URL}}" alt="{{.Name}}" loading="lazy">
+            {{else if eq .Kind "video"}}
+              <video src="{{.URL}}" controls></video>
+            {{else}}
+              <a href="{{.URL}}" target="_blank" rel="noopener noreferrer">添付ファイル</a>
+            {{end}}
+          {{end}}
+        </div>
+      {{end}}
       <div class="meta">
         <a href="/u/{{$.LocalPart}}/status/{{.StatusID}}">{{datetime .Published}}</a>
       </div>
