@@ -9,6 +9,18 @@ Resources:
       Domain:
         CertificateArn: arn:aws:acm:ap-northeast-1:486414336274:certificate/0c2a64fd-0793-4975-b418-c1596e14c5c0
         DomainName: s.nna774.net
+      # 未設定だと画像添付の multipart/form-data ボディが API Gateway で
+      # UTF-8 テキストとして扱われ、Lambda に届く前にバイト列が壊れる
+      # (Gyazo が "Not an Image" で 400 を返す原因だった)。
+      #
+      # '*/*' で全レスポンスを binary 扱いにしたところ、レスポンスの
+      # Accept ヘッダによる binary 判定がうまく効かず HTML/JSON まで
+      # base64 の生文字列で返るようになり、サイト全体が壊れて即 revert
+      # した。この Lambda がレスポンスとして multipart/form-data を返す
+      # ことは無いので、multipart/form-data だけを対象にすればレスポンス
+      # 側 (algnhsa の BinaryContentTypes) には一切影響しない。
+      BinaryMediaTypes:
+        - "multipart/form-data"
   Function:
     Type: AWS::Serverless::Function
     Properties:
