@@ -227,11 +227,17 @@ func TestAudience(t *testing.T) {
 }
 
 func TestStatusRequestNormalize(t *testing.T) {
-	t.Run("空の本文は拒否", func(t *testing.T) {
+	t.Run("空白のみの本文は trim される", func(t *testing.T) {
+		// 空でよいかどうかは画像添付の有無に依るため normalize は判断せず、
+		// requireContentOrAttachment (呼び出し側) が見る。ここでは trim だけ
+		// 確かめる。
 		for _, c := range []string{"", "   ", "\n\n"} {
 			req := &statusRequest{Content: c}
-			if err := req.normalize(); err == nil {
-				t.Errorf("normalize accepted %q", c)
+			if err := req.normalize(); err != nil {
+				t.Errorf("normalize(%q): %v", c, err)
+			}
+			if req.Content != "" {
+				t.Errorf("normalize(%q) left Content = %q, want empty", c, req.Content)
 			}
 		}
 	})

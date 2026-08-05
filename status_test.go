@@ -8,8 +8,36 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/nna774/s.nna774.net/activitystream"
 	"github.com/nna774/s.nna774.net/config"
 )
+
+// content と画像添付のどちらも無い投稿だけを拒否し、画像だけの投稿は
+// 許すことを確かめる。
+func TestRequireContentOrAttachment(t *testing.T) {
+	img := &activitystream.Object{Type: activitystream.ImageType, URL: "https://i.gyazo.com/x.png"}
+	for _, tt := range []struct {
+		name       string
+		content    string
+		attachment *activitystream.Object
+		wantErr    bool
+	}{
+		{"本文のみ", "hi", nil, false},
+		{"画像のみ", "", img, false},
+		{"両方", "hi", img, false},
+		{"どちらも無い", "", nil, true},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			err := requireContentOrAttachment(tt.content, tt.attachment)
+			if tt.wantErr && err == nil {
+				t.Error("requireContentOrAttachment succeeded, want error")
+			}
+			if !tt.wantErr && err != nil {
+				t.Errorf("requireContentOrAttachment: %v", err)
+			}
+		})
+	}
+}
 
 // multipart/form-data では r.ParseForm() だけだとボディが読まれず PostForm
 // が空のままになる (ファイル部分を読むには ParseMultipartForm が要る)。
