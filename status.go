@@ -70,7 +70,15 @@ func (req *statusRequest) audience(followers string, mentioned []string) (to []s
 func parseStatusRequest(r *http.Request) (*statusRequest, error) {
 	req := &statusRequest{}
 	if isFormRequest(r) {
-		if err := r.ParseForm(); err != nil {
+		// multipart/form-data は r.ParseForm() だけではボディを読まず
+		// PostForm が空のままになる (ファイル部分と共にボディを読むには
+		// ParseMultipartForm が要る)。画像添付の input[type=file] を
+		// 足す前は素の form しか来なかったので気づかれていなかった。
+		if strings.HasPrefix(r.Header.Get("Content-Type"), "multipart/form-data") {
+			if err := r.ParseMultipartForm(maxImageUploadBytes); err != nil {
+				return nil, err
+			}
+		} else if err := r.ParseForm(); err != nil {
 			return nil, err
 		}
 		req.Content = r.PostFormValue("content")
@@ -88,6 +96,11 @@ func parseStatusRequest(r *http.Request) (*statusRequest, error) {
 	return req, nil
 }
 
+// maxImageUploadBytes は添付画像を multipart/form-data から読む際にメモリ
+// 上に置く上限。API Gateway 自体のペイロード上限 (10MB) より小さくして
+// あるので、画像はディスクに逃げずにメモリ内で完結する。
+const maxImageUploadBytes = 8 << 20
+
 func isFormRequest(r *http.Request) bool {
 	ct := r.Header.Get("Content-Type")
 	return strings.HasPrefix(ct, "application/x-www-form-urlencoded") ||
@@ -101,6 +114,13 @@ func postStatusHandler(w http.ResponseWriter, r *http.Request) httperror.HttpErr
 	req, err := parseStatusRequest(r)
 	if err != nil {
 		return httperror.StatusUnprocessableEntity("bad status request", err)
+	}
+
+	// 画像は id 発行より前に済ませる。アップロードに失敗した投稿のために
+	// 連番を無駄に消費しないため。
+	attachment, herr := imageAttachmentFromRequest(ctx, r)
+	if herr != nil {
+		return herr
 	}
 
 	id, err := client.Inc(ctx, statusKey)
@@ -121,6 +141,9 @@ func postStatusHandler(w http.ResponseWriter, r *http.Request) httperror.HttpErr
 		"", renderContent(req.Content, mentions), Config.ID(), to, cc, mentionTags(mentions))
 	if req.InReplyTo != "" {
 		note.InReplyTo = activitystream.URIRef(req.InReplyTo)
+	}
+	if attachment != nil {
+		note.Attachment = activitystream.Objects{attachment}
 	}
 	create := noteToCreate(note)
 
@@ -319,6 +342,42 @@ func mentionName(ctx context.Context, actorURI string) string {
 		return "@" + actor.PreferredUsername
 	}
 	return "@" + actor.PreferredUsername + "@" + host
+}
+
+// imageAttachmentFromRequest は "image" フィールドに画像が来ていれば Gyazo
+// にアップロードし、Note.Attachment に載せる Object を作る。フィールドが
+// 無ければ (nil, nil) を返す。
+//
+// multipart/form-data のときしか見てはいけない。
+// application/x-www-form-urlencoded にファイル部分は存在しないので
+// r.FormFile を呼ぶと "request Content-Type isn't multipart/form-data" で
+// 失敗する。isFormRequest はこの2つをまとめて form 判定してしまうため、
+// ここでは multipart かどうかを別途見て、そうでなければ素通りする。
+func imageAttachmentFromRequest(ctx context.Context, r *http.Request) (*activitystream.Object, httperror.HttpError) {
+	if !strings.HasPrefix(r.Header.Get("Content-Type"), "multipart/form-data") {
+		return nil, nil
+	}
+	file, header, err := r.FormFile("image")
+	if err != nil {
+		if errors.Is(err, http.ErrMissingFile) {
+			return nil, nil
+		}
+		return nil, httperror.StatusUnprocessableEntity("bad image upload", err)
+	}
+	defer file.Close()
+
+	if Config.GyazoAccessToken() == "" {
+		return nil, httperror.StatusInternalServerError("image upload is not configured", nil)
+	}
+	result, err := uploadToGyazo(ctx, Config.GyazoAccessToken(), header.Filename, file)
+	if err != nil {
+		return nil, httperror.StatusInternalServerError("cannot upload the image to gyazo", err)
+	}
+	return &activitystream.Object{
+		Type:      activitystream.ImageType,
+		URL:       result.URL,
+		MediaType: result.MediaType,
+	}, nil
 }
 
 func appendUnique(xs []string, v string) []string {

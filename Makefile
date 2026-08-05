@@ -12,6 +12,9 @@ KV_TABLE_NAME := s-nna774-net-kv
 # ローカル開発用の資格情報。本番では SSM から読む。
 DEV_API_TOKEN := dev-token
 DEV_SESSION_SECRET := dev-session-secret
+# Gyazo は外部サービスなのでダミー値では動かない。画像投稿を試すときだけ
+# `make dev DEV_GYAZO_ACCESS_TOKEN=xxx` のように渡す。
+DEV_GYAZO_ACCESS_TOKEN ?=
 
 OUT := s.nna774.net
 # provided.al2023 は zip 直下の bootstrap という実行ファイルを起動する。
@@ -33,6 +36,7 @@ dev: app
 	DYNAMODB_KV_TABLE_NAME=$(KV_TABLE_NAME) \
 	DYNAMODB_ENDPOINT=$(DYNAMODB_LOCAL_ENDPOINT) \
 	API_TOKEN=$(DEV_API_TOKEN) SESSION_SECRET=$(DEV_SESSION_SECRET) \
+	GYAZO_ACCESS_TOKEN=$(DEV_GYAZO_ACCESS_TOKEN) \
 	AWS_ACCESS_KEY_ID=dummy AWS_SECRET_ACCESS_KEY=dummy AWS_REGION=$(REGION) \
 	./$(OUT)
 

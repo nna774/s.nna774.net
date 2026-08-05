@@ -1,5 +1,5 @@
 {{define "content"}}
-<form class="compose" method="post" action="/u/{{.LocalPart}}/statuses">
+<form class="compose" method="post" action="/u/{{.LocalPart}}/statuses" enctype="multipart/form-data">
   {{with .InReplyTo}}
     <div class="reply-to">返信先: <a href="{{.}}">{{.}}</a></div>
     <input type="hidden" name="in_reply_to" value="{{.}}">
@@ -13,6 +13,7 @@
     </select>
     <input type="text" name="mentions" placeholder="メンション先の actor URI (空白区切り)"
            value="{{.MentionPrefill}}">
+    <input type="file" name="image" accept="image/*">
     <button type="submit" class="primary" title="Cmd-Enter (Ctrl-Enter) でも投稿できる">投稿</button>
   </div>
 </form>
