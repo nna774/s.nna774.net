@@ -336,9 +336,7 @@ func indexHandler(w http.ResponseWriter, r *http.Request) httperror.HttpError {
 	if r.URL.Path != "/" {
 		return httperror.StatusNotFound("", nil)
 	}
-	w.WriteHeader(http.StatusOK)
-	w.Write([]byte("hello"))
-	log.Printf("called with %+v", r)
+	http.Redirect(w, r, "/u/nana", http.StatusMovedPermanently)
 	return nil
 }
 

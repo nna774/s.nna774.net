@@ -19,7 +19,7 @@ func TestVerifyBoostedNote(t *testing.T) {
 		}
 	}
 
-	if err := verifyBoostedNote(valid(), uri); err != nil {
+	if err := verifyFetchedNote(valid(), uri); err != nil {
 		t.Fatalf("正しい投稿が弾かれた: %v", err)
 	}
 
@@ -63,7 +63,7 @@ func TestVerifyBoostedNote(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			note := valid()
 			tt.corrupt(note)
-			if err := verifyBoostedNote(note, uri); err == nil {
+			if err := verifyFetchedNote(note, uri); err == nil {
 				t.Error("弾かれなかった")
 			}
 		})

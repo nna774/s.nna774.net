@@ -337,6 +337,7 @@ type favoriteItem struct {
 	AuthorName string
 	AuthorURI  string
 	IconURL    string
+	Content    string
 	At         string
 }
 
@@ -388,6 +389,7 @@ func favoritesHandler(w http.ResponseWriter, r *http.Request) httperror.HttpErro
 			AuthorName: it.Name,
 			AuthorURI:  it.TargetActor,
 			IconURL:    it.IconURL,
+			Content:    it.Content,
 			At:         it.At,
 		})
 	}

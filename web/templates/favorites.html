@@ -15,6 +15,9 @@
           <a class="name" href="/remote?actor={{.AuthorURI}}">{{if .AuthorName}}{{.AuthorName}}{{else}}{{acct .AuthorURI}}{{end}}</a>
         {{end}}
       </div>
+      {{if and $.Authed .Content}}
+        <div class="body">{{sanitize .Content}}</div>
+      {{end}}
       <div class="meta">
         <a href="{{.ObjectURI}}">{{datetime .At}}</a>
       </div>

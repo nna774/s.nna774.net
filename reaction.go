@@ -71,6 +71,15 @@ func likeRequestHandler(w http.ResponseWriter, r *http.Request) httperror.HttpEr
 	// 表示名とアイコンも一緒に控える。/u/:user/favorites の一覧描画のたびに
 	// 著者をリモートへ取りに行かずに済ませるため。
 	name, iconURL := actorDisplay(actor)
+	// 本文もこの時点でスナップショットしておく。あとで消えたり編集されたり
+	// しても /u/:user/favorites に何も出せなくなるのを避けるため。引けなく
+	// てもいいね自体は失敗させない。
+	var content string
+	if note, err := fetchVerifiedNote(ctx, object); err == nil {
+		content = note.Content
+	} else {
+		logf("cannot snapshot content of %v for favorites: %v", object, err)
+	}
 	// 配信より先に記録する。逆順だと、配信された Like を取り消す手段が
 	// 無くなる。
 	if err := client.PutKV(ctx, &datastore.KVItem{
@@ -81,6 +90,7 @@ func likeRequestHandler(w http.ResponseWriter, r *http.Request) httperror.HttpEr
 		TargetActor: actorURI,
 		Name:        name,
 		IconURL:     iconURL,
+		Content:     content,
 		At:          nowRFC3339(),
 	}); err != nil {
 		return httperror.StatusInternalServerError("cannot record the like", err)
@@ -131,7 +141,7 @@ func boostRequestHandler(w http.ResponseWriter, r *http.Request) httperror.HttpE
 		return herr
 	}
 
-	note, err := boostedNote(ctx, object)
+	note, err := fetchVerifiedNote(ctx, object)
 	if err != nil {
 		return httperror.StatusUnprocessableEntity("cannot fetch that status", err)
 	}
