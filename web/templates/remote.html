@@ -44,7 +44,9 @@
           <div class="attachments">
             {{range .Attachments}}
               {{if eq .Kind "image"}}
+                {{if .PageURL}}<a href="{{.PageURL}}" target="_blank" rel="noopener noreferrer">{{end}}
                 <img src="{{.URL}}" alt="{{.Name}}" loading="lazy">
+                {{if .PageURL}}</a>{{end}}
               {{else if eq .Kind "video"}}
                 <video src="{{.URL}}" controls></video>
               {{else}}

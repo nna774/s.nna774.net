@@ -176,9 +176,58 @@ func TestNoteAttachments(t *testing.T) {
 	}
 }
 
+// Gyazo 由来の画像添付は、サムネイルをクリックすると Gyazo の画像ページへ
+// リンクしていることを HTML 出力で確認する。
+func TestStatusesPageRenderLinksGyazoThumbnailToImagePage(t *testing.T) {
+	page := statusesPage{
+		pageBase: pageBase{Title: "投稿", SiteName: "nana", LocalPart: "nana", Handle: "@nana"},
+		Statuses: []statusesItem{{
+			StatusID:  7,
+			Content:   "<p>こんにちは</p>",
+			Published: "2026-08-03T12:00:00Z",
+			Attachments: []attachmentItem{
+				{
+					URL:     "https://i.gyazo.com/1234567890abcdef1234567890abcdef.png",
+					Kind:    "image",
+					PageURL: "https://gyazo.com/1234567890abcdef1234567890abcdef",
+				},
+			},
+		}},
+	}
+	buf := &bytes.Buffer{}
+	if err := web.Render(buf, "statuses", page); err != nil {
+		t.Fatalf("rendering statuses failed: %v", err)
+	}
+	html := buf.String()
+	if !strings.Contains(html, `<a href="https://gyazo.com/1234567890abcdef1234567890abcdef" target="_blank" rel="noopener noreferrer">`) {
+		t.Errorf("rendered page does not link the thumbnail to the gyazo image page: %s", html)
+	}
+}
+
 func TestNoteAttachmentsEmpty(t *testing.T) {
 	if got := noteAttachments(&activitystream.Object{}); got != nil {
 		t.Errorf("noteAttachments() = %#v, want nil", got)
+	}
+}
+
+// Gyazo 由来の添付はサムネイル表示が小さいため、タイムラインからクリック
+// で原寸の画像ページへ飛べるように PageURL を持たせる。
+func TestNoteAttachmentsSetsGyazoPageURL(t *testing.T) {
+	note := &activitystream.Object{
+		Attachment: activitystream.Objects{
+			{URL: "https://i.gyazo.com/1234567890abcdef1234567890abcdef.png", MediaType: "image/png"},
+		},
+	}
+	got := noteAttachments(note)
+	want := []attachmentItem{
+		{
+			URL:     "https://i.gyazo.com/1234567890abcdef1234567890abcdef.png",
+			Kind:    "image",
+			PageURL: "https://gyazo.com/1234567890abcdef1234567890abcdef",
+		},
+	}
+	if len(got) != len(want) || got[0] != want[0] {
+		t.Errorf("noteAttachments() = %#v, want %#v", got, want)
 	}
 }
 

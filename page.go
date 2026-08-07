@@ -473,6 +473,10 @@ type attachmentItem struct {
 	// Kind は "image" / "video" / "other"。テンプレート側で分岐しやすい
 	// ように mediaType から先に判定しておく。
 	Kind string
+	// PageURL は Gyazo の画像ページ URL。サムネイル表示が小さいため、
+	// クリックで原寸を見られるようにリンク先として使う。Gyazo 由来の
+	// 添付でなければ空文字。
+	PageURL string
 }
 
 // noteAttachments は note.Attachment のうち URL を持つものだけを表示用に
@@ -486,11 +490,15 @@ func noteAttachments(note *activitystream.Object) []attachmentItem {
 		if a.URL == "" {
 			continue
 		}
-		items = append(items, attachmentItem{
+		item := attachmentItem{
 			URL:  a.URL,
 			Name: a.Name,
 			Kind: attachmentKind(a.MediaType),
-		})
+		}
+		if pageURL, ok := gyazoImagePageURL(a.URL); ok {
+			item.PageURL = pageURL
+		}
+		items = append(items, item)
 	}
 	return items
 }
