@@ -149,3 +149,28 @@ func gyazoHEICThumbnailURL(rawURL string) (string, bool) {
 	}
 	return fmt.Sprintf("https://i.gyazo.com/thumb/1000/%s-heic.jpg", hash), true
 }
+
+// gyazoImagePageURL は Gyazo にアップロードした画像の直リンク URL から、
+// ブラウザで見る画像ページ (https://gyazo.com/<hash>) の URL を組み立てる。
+// タイムライン上のサムネイルは小さく表示されるため、クリックで原寸の
+// 画像ページへ飛べるようにするために使う。i.gyazo.com 以外の URL の場合は
+// false を返す。
+func gyazoImagePageURL(rawURL string) (string, bool) {
+	u, err := url.Parse(rawURL)
+	if err != nil || u.Host != "i.gyazo.com" {
+		return "", false
+	}
+	base := path.Base(u.Path)
+	hash := strings.TrimSuffix(base, path.Ext(base))
+	// /thumb/<size>/<hash>-heic のようなサムネイル URL は末尾に type の
+	// ヒントが付くので削る。
+	if strings.HasPrefix(u.Path, "/thumb/") {
+		if i := strings.LastIndex(hash, "-"); i >= 0 {
+			hash = hash[:i]
+		}
+	}
+	if hash == "" {
+		return "", false
+	}
+	return "https://gyazo.com/" + hash, true
+}

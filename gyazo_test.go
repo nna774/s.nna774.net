@@ -130,3 +130,46 @@ func TestUploadToGyazoRejectsErrorResponse(t *testing.T) {
 		t.Error("uploadToGyazo succeeded, want error")
 	}
 }
+
+func TestGyazoImagePageURL(t *testing.T) {
+	tests := []struct {
+		name   string
+		rawURL string
+		want   string
+		wantOK bool
+	}{
+		{
+			name:   "直リンク",
+			rawURL: "https://i.gyazo.com/1234567890abcdef1234567890abcdef.png",
+			want:   "https://gyazo.com/1234567890abcdef1234567890abcdef",
+			wantOK: true,
+		},
+		{
+			name:   "HEIC サムネイル",
+			rawURL: "https://i.gyazo.com/thumb/1000/1234567890abcdef1234567890abcdef-heic.jpg",
+			want:   "https://gyazo.com/1234567890abcdef1234567890abcdef",
+			wantOK: true,
+		},
+		{
+			name:   "gyazo 以外のホスト",
+			rawURL: "https://example.com/1234567890abcdef1234567890abcdef.png",
+			wantOK: false,
+		},
+		{
+			name:   "不正な URL",
+			rawURL: "://not-a-url",
+			wantOK: false,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, ok := gyazoImagePageURL(tt.rawURL)
+			if ok != tt.wantOK {
+				t.Fatalf("ok = %v, want %v", ok, tt.wantOK)
+			}
+			if ok && got != tt.want {
+				t.Errorf("gyazoImagePageURL(%q) = %q, want %q", tt.rawURL, got, tt.want)
+			}
+		})
+	}
+}
