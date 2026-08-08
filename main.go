@@ -30,6 +30,10 @@ import (
 
 const configFile = "config.yml"
 
+// commitHash はビルド時に -ldflags "-X main.commitHash=..." で埋め込む
+// (Makefile 参照)。埋め込まずに go build した場合は "unknown" のまま。
+var commitHash = "unknown"
+
 var region = "ap-northeast-1" //
 var tableName = os.Getenv("DYNAMODB_TABLE_NAME")
 var kvTableName = os.Getenv("DYNAMODB_KV_TABLE_NAME")

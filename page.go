@@ -27,6 +27,10 @@ type pageBase struct {
 	// UnreadCount はヘッダに出す未読通知の数。数えるのに DynamoDB を引く
 	// ので、newPageBase では設定せず、出したいページが自分で入れる。
 	UnreadCount int
+	// CommitURL はフッターの「ActivityPub」リンク先。デプロイされている
+	// commit を確認できるようにするためのもので、今のところ timeline
+	// でしか入れない。空なら通常のリンクなしテキストのまま。
+	CommitURL string
 }
 
 func newPageBase(r *http.Request, title string) pageBase {
@@ -39,6 +43,15 @@ func newPageBase(r *http.Request, title string) pageBase {
 		Handle:    "@" + Config.Username,
 		Authed:    authed,
 	}
+}
+
+// commitURL はデプロイされている commit の GitHub 上のリンク。ldflags で
+// commitHash を埋め込まずに go build した場合は空を返す。
+func commitURL() string {
+	if commitHash == "" || commitHash == "unknown" {
+		return ""
+	}
+	return "https://github.com/nna774/s.nna774.net/commit/" + commitHash
 }
 
 func renderPage(w http.ResponseWriter, page string, data interface{}) httperror.HttpError {
@@ -661,6 +674,8 @@ func timelineHandler(w http.ResponseWriter, r *http.Request) httperror.HttpError
 	page.MentionPrefill = r.URL.Query().Get("mentions")
 	// 認証必須のページなので検索避けする。
 	page.NoIndex = true
+	// どの commit がデプロイされているか footer から追えるようにする。
+	page.CommitURL = commitURL()
 	return renderPage(w, "timeline", page)
 }
 
