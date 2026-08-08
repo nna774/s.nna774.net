@@ -50,7 +50,11 @@
         </div>
       {{end}}
       <div class="meta">
-        <a href="{{.URL}}">{{datetime .Published}}</a>
+        {{if .Boosted}}
+          <a href="{{.AnnounceURI}}">{{datetime .Published}}</a>
+        {{else}}
+          <a href="{{.URL}}">{{datetime .Published}}</a>
+        {{end}}
       </div>
     </article>
   {{end}}

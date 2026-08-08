@@ -62,6 +62,10 @@ const (
 	// いいね) とは向きが逆なので分けてある。
 	KVMyLikes  = "mylikes"
 	KVMyBoosts = "myboosts"
+	// KVMyBoostByID は KVMyBoosts の逆引き。KVMyBoosts は対象投稿の URI を
+	// キーにしているが、Announce 自身の URI (/announce/:id) から辿るには
+	// Announce.ID をキーにした索引が要る。
+	KVMyBoostByID = "myboostbyid"
 	// KVCursor は「どこまで読んだか」を持つ。通知の未読判定に使う。
 	KVCursor = "cursor"
 	// KVActorInfo はフォロー関係にない相手の表示名とアイコンのキャッシュ。

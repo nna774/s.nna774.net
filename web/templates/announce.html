@@ -1,0 +1,52 @@
+{{define "meta"}}
+<meta property="og:type" content="article">
+<meta property="og:title" content="{{.SiteName}} のブースト">
+<meta property="og:url" content="{{.AnnounceURI}}">
+<meta property="og:description" content="{{.Excerpt}}">
+{{if .IconURL}}<meta property="og:image" content="{{.IconURL}}">{{end}}
+<meta name="twitter:card" content="summary">
+{{end}}
+
+{{define "content"}}
+<div class="boosted">{{.SiteName}} がブースト</div>
+<article>
+  <div class="who">
+    {{if .IconURL}}<img src="{{.IconURL}}" alt="">{{end}}
+    {{if .Mine}}
+      <span class="name">{{.Name}}</span>
+      <span>{{acct .AuthorURI}}</span>
+    {{else}}
+      <a class="name" href="/remote?actor={{.AuthorURI}}">{{.Name}}</a>
+      <a href="/remote?actor={{.AuthorURI}}">{{acct .AuthorURI}}</a>
+    {{end}}
+  </div>
+  {{with .InReplyTo}}<div class="reply-to">返信: <a href="{{.}}">{{.}}</a></div>{{end}}
+  <div class="body">{{sanitize .Content}}</div>
+  {{if .Attachments}}
+    <div class="attachments">
+      {{range .Attachments}}
+        {{if eq .Kind "image"}}
+          {{if .PageURL}}<a href="{{.PageURL}}" target="_blank" rel="noopener noreferrer">{{end}}
+          <img src="{{.URL}}" alt="{{.Name}}" loading="lazy">
+          {{if .PageURL}}</a>{{end}}
+        {{else if eq .Kind "video"}}
+          <video src="{{.URL}}" controls></video>
+        {{else}}
+          <a href="{{.URL}}" target="_blank" rel="noopener noreferrer">添付ファイル</a>
+        {{end}}
+      {{end}}
+    </div>
+  {{end}}
+  <div class="meta">
+    <a href="{{.AnnounceURI}}">{{datetime .Published}}</a>
+    {{if .Authed}}
+      {{if .Liked}}
+        <a href="#" onclick="unlikeStatus(event, '{{.ObjectURI}}', '{{.LocalPart}}')">いいね済み</a>
+      {{else}}
+        <a href="#" onclick="likeStatus(event, '{{.ObjectURI}}', '{{.AuthorURI}}', '{{.LocalPart}}')">いいね</a>
+      {{end}}
+      <a href="#" onclick="unboostStatus(event, '{{.ObjectURI}}', '{{.LocalPart}}')">取り消し</a>
+    {{end}}
+  </div>
+</article>
+{{end}}

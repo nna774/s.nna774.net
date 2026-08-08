@@ -171,6 +171,16 @@ func boostRequestHandler(w http.ResponseWriter, r *http.Request) httperror.HttpE
 	}); err != nil {
 		return httperror.StatusInternalServerError("cannot record the boost", err)
 	}
+	// announceStatusHandler が Announce.ID (/announce/:id) から辿るための
+	// 逆引き。KVMyBoosts は対象投稿の URI がキーなので、これが無いと
+	// Announce 自身の URI からは引けない。
+	if err := client.PutKV(ctx, &datastore.KVItem{
+		PK:         datastore.KVMyBoostByID,
+		SK:         announce.ID,
+		TimelineID: timelineID,
+	}); err != nil {
+		return httperror.StatusInternalServerError("cannot record the boost", err)
+	}
 
 	inboxes, err := followerInboxes(ctx)
 	if err != nil {
@@ -229,6 +239,11 @@ func unboostRequestHandler(w http.ResponseWriter, r *http.Request) httperror.Htt
 	if item.TimelineID != 0 {
 		if err := client.DeleteObject(ctx, timelineKey, item.TimelineID); err != nil {
 			logf("removing the boost from the timeline failed: %v", err)
+		}
+	}
+	if item.ActivityID != "" {
+		if err := client.DeleteKV(ctx, datastore.KVMyBoostByID, item.ActivityID); err != nil {
+			logf("removing the boost id index failed: %v", err)
 		}
 	}
 	if err := client.DeleteKV(ctx, datastore.KVMyBoosts, object); err != nil {

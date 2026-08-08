@@ -52,7 +52,9 @@
         </div>
       {{end}}
       <div class="meta">
-        {{if .ObjectURI}}
+        {{if .BoostedByURI}}
+          <a href="{{.AnnounceURI}}">{{datetime .Published}}</a>
+        {{else if .ObjectURI}}
           <a href="{{.ObjectURI}}">{{datetime .Published}}</a>
         {{else}}
           <span>{{datetime .Published}}</span>

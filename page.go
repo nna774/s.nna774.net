@@ -82,12 +82,13 @@ type profileStatusItem struct {
 	Published   string
 	URL         string
 	InReplyTo   string
-	// Boosted / AuthorName / AuthorURI は自分がブーストした他人の投稿の
-	// ときだけ入る。
-	Boosted    bool
-	AuthorName string
-	AuthorURI  string
-	sortKey    time.Time
+	// Boosted / AuthorName / AuthorURI / AnnounceURI は自分がブーストした
+	// 他人の投稿のときだけ入る。AnnounceURI は日時のリンク先に使う。
+	Boosted     bool
+	AuthorName  string
+	AuthorURI   string
+	AnnounceURI string
+	sortKey     time.Time
 }
 
 const profileStatusCount = 20
@@ -162,6 +163,7 @@ func htmlUserHandler(w http.ResponseWriter, r *http.Request) httperror.HttpError
 			Boosted:     true,
 			AuthorName:  authorName(ctx, note.AttributedTo.ID()),
 			AuthorURI:   note.AttributedTo.ID(),
+			AnnounceURI: act.ID,
 			sortKey:     publishedTime(act.Published),
 		})
 	}
@@ -531,6 +533,10 @@ type timelineItem struct {
 	// 書いた人とブーストした人が別なので、著者とは分けて持つ。
 	BoostedByName string
 	BoostedByURI  string
+	// AnnounceURI はブーストのときだけ入る、Announce 自身の URI。日時の
+	// リンク先を元投稿ではなくブースト自体に向けるために使う (Twitter の
+	// リツイート個別ページに相当)。
+	AnnounceURI string
 	// Liked / Boosted は自分が既にいいね・ブースト済みかどうか。ボタンの
 	// 出し分けに使う。
 	Liked   bool
@@ -631,6 +637,7 @@ func timelineHandler(w http.ResponseWriter, r *http.Request) httperror.HttpError
 		if boostedBy != "" {
 			item.BoostedByURI = boostedBy
 			item.BoostedByName = authorName(ctx, boostedBy)
+			item.AnnounceURI = act.ID
 		}
 		if isMine {
 			// 削除フォームに使う連番は自分の投稿にしか無い。
