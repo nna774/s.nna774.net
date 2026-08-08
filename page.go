@@ -516,31 +516,121 @@ func favoritesHandler(w http.ResponseWriter, r *http.Request) httperror.HttpErro
 
 type statusPage struct {
 	pageBase
-	Name        string
-	IconURL     string
-	Content     string
-	Attachments []attachmentItem
-	Published   string
-	ObjectURI   string
-	InReplyTo   string
-	Excerpt     string
-	StatusID    int
+	Name          string
+	IconURL       string
+	Content       string
+	Attachments   []attachmentItem
+	Published     string
+	ObjectURI     string
+	InReplyTo     string
+	Excerpt       string
+	StatusID      int
+	LikeCount     int
+	AnnounceCount int
 }
 
 func htmlStatusHandler(w http.ResponseWriter, r *http.Request, id int, note *activitystream.Object) httperror.HttpError {
+	ctx := r.Context()
 	page := statusPage{
-		pageBase:    newPageBase(r, Config.Name+": "+excerpt(note.Content, 40)),
-		Name:        Config.Name,
-		IconURL:     Config.IconURI,
-		Content:     note.Content,
-		Attachments: noteAttachments(note),
-		Published:   note.Published,
-		ObjectURI:   note.ID,
-		InReplyTo:   note.InReplyTo.ID(),
-		Excerpt:     excerpt(note.Content, 140),
-		StatusID:    id,
+		pageBase:      newPageBase(r, Config.Name+": "+excerpt(note.Content, 40)),
+		Name:          Config.Name,
+		IconURL:       Config.IconURI,
+		Content:       note.Content,
+		Attachments:   noteAttachments(note),
+		Published:     note.Published,
+		ObjectURI:     note.ID,
+		InReplyTo:     note.InReplyTo.ID(),
+		Excerpt:       excerpt(note.Content, 140),
+		StatusID:      id,
+		LikeCount:     countReactors(ctx, datastore.KVLikes, note.ID),
+		AnnounceCount: countReactors(ctx, datastore.KVAnnounced, note.ID),
 	}
 	return renderPage(w, "status", page)
+}
+
+// countReactors は reactorsOf の件数だけを見たいときに使う。取得に失敗
+// しても件数表示のためだけに 500 で落とすほどではないので、0 件として扱う。
+func countReactors(ctx context.Context, pk, objectURI string) int {
+	items, err := reactorsOf(ctx, pk, objectURI)
+	if err != nil {
+		logf("counting reactors (%v) of %v failed: %v", pk, objectURI, err)
+		return 0
+	}
+	return len(items)
+}
+
+// --- いいね・ブーストした人の一覧 ---------------------------------------
+
+type reactorItem struct {
+	Name     string
+	ActorURI string
+	IconURL  string
+	// AnnounceURI は Announce 自身の URI。/status/:id/announces でのみ
+	// 使う。分かっている場合だけ元のブーストへリンクする。
+	AnnounceURI string
+	At          string
+}
+
+type reactorsPage struct {
+	pageBase
+	Heading   string
+	StatusID  int
+	ObjectURI string
+	Items     []reactorItem
+}
+
+// statusLikesHandler は自分の投稿に付いたいいねをした人の一覧。
+func statusLikesHandler(w http.ResponseWriter, r *http.Request) httperror.HttpError {
+	return statusReactorsHandler(w, r, datastore.KVLikes, "status_likes", "いいね", false)
+}
+
+// statusAnnouncesHandler は自分の投稿をブーストした人の一覧。
+func statusAnnouncesHandler(w http.ResponseWriter, r *http.Request) httperror.HttpError {
+	return statusReactorsHandler(w, r, datastore.KVAnnounced, "status_announces", "RT", true)
+}
+
+func statusReactorsHandler(w http.ResponseWriter, r *http.Request, pk, templateName, heading string, withAnnounceLink bool) httperror.HttpError {
+	ctx := r.Context()
+	id, herr := statusIDFromRequest(r)
+	if herr != nil {
+		return herr
+	}
+	status, err := client.GetObject(ctx, statusKey, id)
+	if err != nil {
+		if errors.Is(err, datastore.ErrNotFound) {
+			return httperror.StatusNotFound("no such status", err)
+		}
+		return httperror.StatusInternalServerError("cannot load the status", err)
+	}
+
+	items, err := reactorsOf(ctx, pk, status.ID)
+	if err != nil {
+		return httperror.StatusInternalServerError("cannot list the reactors", err)
+	}
+	sort.SliceStable(items, func(i, j int) bool { return items[i].At > items[j].At })
+
+	prefix := status.ID + "#"
+	page := reactorsPage{
+		pageBase:  newPageBase(r, Config.Name+" — "+heading),
+		Heading:   heading,
+		StatusID:  id,
+		ObjectURI: status.ID,
+		Items:     make([]reactorItem, 0, len(items)),
+	}
+	for _, it := range items {
+		actorURI := strings.TrimPrefix(it.SK, prefix)
+		item := reactorItem{
+			Name:     authorName(ctx, actorURI),
+			ActorURI: actorURI,
+			IconURL:  cachedIconURL(ctx, actorURI),
+			At:       it.At,
+		}
+		if withAnnounceLink {
+			item.AnnounceURI = it.ActivityID
+		}
+		page.Items = append(page.Items, item)
+	}
+	return renderPage(w, templateName, page)
 }
 
 // excerpt は og:description 用に本文を短く切る。タグは落とす。

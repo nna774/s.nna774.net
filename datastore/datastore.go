@@ -56,6 +56,11 @@ const (
 	KVActorKey  = "actorkey"
 	KVSeen      = "seen"
 	KVLikes     = "likes"
+	// KVAnnounced は自分の投稿についた Announce (ブースト) の記録。SK は
+	// KVLikes と同じく対象投稿の URI + "#" + actor の URI。ActivityID には
+	// Announce 自身の URI を控え、/status/:id/announces から相手の Announce
+	// へリンクできるようにする。
+	KVAnnounced = "announced"
 	// KVMyLikes / KVMyBoosts は自分が他人の投稿にいいね・ブーストした記録。
 	// SK は対象投稿の URI。取り消し (Undo) のときに元の Activity の id と
 	// 配信先を引き直さずに済ませるために持つ。KVLikes (自分の投稿に付いた

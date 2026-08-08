@@ -260,6 +260,25 @@ type reactionState struct {
 	boosted map[string]bool
 }
 
+// reactorsOf は自分の投稿 (KVLikes / KVAnnounced) に対して、誰が反応したかを
+// 返す。両パーティションとも SK が「対象投稿の URI + "#" + actor の URI」の
+// 形で、投稿ごとに分かれていないため、pk 全体を引いてから prefix で絞る。
+// 1人用インスタンスの反応数はたかが知れているので、これで十分。
+func reactorsOf(ctx context.Context, pk, objectURI string) ([]*datastore.KVItem, error) {
+	items, err := client.QueryKV(ctx, pk)
+	if err != nil {
+		return nil, err
+	}
+	prefix := objectURI + "#"
+	result := make([]*datastore.KVItem, 0, len(items))
+	for _, it := range items {
+		if actorID, ok := strings.CutPrefix(it.SK, prefix); ok && actorID != "" {
+			result = append(result, it)
+		}
+	}
+	return result, nil
+}
+
 func loadReactionState(ctx context.Context) reactionState {
 	state := reactionState{liked: map[string]bool{}, boosted: map[string]bool{}}
 	if items, err := client.QueryKV(ctx, datastore.KVMyLikes); err != nil {

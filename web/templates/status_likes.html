@@ -1,0 +1,22 @@
+{{define "content"}}
+<div class="profile">
+  <div>
+    <h2>{{.Heading}}</h2>
+    <div class="handle"><a href="/u/{{.LocalPart}}/status/{{.StatusID}}">投稿へ戻る</a></div>
+  </div>
+</div>
+
+{{if .Items}}
+  {{range .Items}}
+    <article>
+      <div class="who">
+        {{if .IconURL}}<img src="{{.IconURL}}" alt="">{{end}}
+        <a class="name" href="/remote?actor={{.ActorURI}}">{{if .Name}}{{.Name}}{{else}}{{acct .ActorURI}}{{end}}</a>
+      </div>
+      <div class="meta">{{acct .ActorURI}} · {{datetime .At}}</div>
+    </article>
+  {{end}}
+{{else}}
+  <p class="empty">まだ誰もいいねしていない。</p>
+{{end}}
+{{end}}
