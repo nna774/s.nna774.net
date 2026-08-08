@@ -73,7 +73,7 @@ func htmlAnnounceHandler(w http.ResponseWriter, r *http.Request, announce *activ
 	ctx := r.Context()
 	authorURI := note.AttributedTo.ID()
 	page := announcePage{
-		pageBase:    newPageBase(r, Config.Name+" のブースト: "+excerpt(note.Content, 40)),
+		pageBase:    newPageBase(r, Config.Name+" のRT: "+excerpt(note.Content, 40)),
 		AnnounceURI: announce.ID,
 		Name:        authorName(ctx, authorURI),
 		AuthorURI:   authorURI,

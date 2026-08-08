@@ -6,7 +6,7 @@
         {{if .IconURL}}<img src="{{.IconURL}}" alt="">{{end}}
         <a class="name" href="/remote?actor={{.ActorURI}}">{{.ActorName}}</a>
         <span>{{acct .ActorURI}}</span>
-        <span class="kind">{{if eq .Kind "like"}}がいいねした{{else if eq .Kind "announce"}}がブーストした{{else if eq .Kind "undo-like"}}がいいねを取り消した{{else if eq .Kind "undo-announce"}}がブーストを取り消した{{else if eq .Kind "delete"}}が投稿を削除した{{else if eq .Kind "follow"}}にフォローされた{{else}}から返信{{end}}</span>
+        <span class="kind">{{if eq .Kind "like"}}がいいねした{{else if eq .Kind "announce"}}がRTした{{else if eq .Kind "undo-like"}}がいいねを取り消した{{else if eq .Kind "undo-announce"}}がRTを取り消した{{else if eq .Kind "delete"}}が投稿を削除した{{else if eq .Kind "follow"}}にフォローされた{{else}}から返信{{end}}</span>
       </div>
 
       {{if eq .Kind "mention"}}

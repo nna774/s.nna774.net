@@ -163,7 +163,7 @@ func TestStatusesPageRendersFilterLinks(t *testing.T) {
 	html := buf.String()
 	for _, want := range []string{
 		`<a href="/u/nana/status">すべて</a>`,
-		`<b>ブーストのみ</b>`,
+		`<b>RTのみ</b>`,
 		`<a href="/u/nana/status?filter=media">メディアのみ</a>`,
 	} {
 		if !strings.Contains(html, want) {
@@ -226,7 +226,7 @@ func TestStatusesPageRendersBoosts(t *testing.T) {
 	for _, want := range []string{
 		"自分の投稿",
 		"他人の投稿",
-		`href="/remote?actor=https%3a%2f%2fexample.com%2fusers%2fsomeone">someone</a> の投稿をブースト`,
+		`href="/remote?actor=https%3a%2f%2fexample.com%2fusers%2fsomeone">someone</a> の投稿をRT`,
 		`href="https://s.nna774.net/announce/123"`,
 		`/u/nana/status/7`,
 	} {
@@ -409,7 +409,7 @@ func TestProfilePageRendersBoosts(t *testing.T) {
 	for _, want := range []string{
 		"自分の投稿",
 		"他人の投稿",
-		`href="/remote?actor=https%3a%2f%2fexample.com%2fusers%2fsomeone">someone</a> の投稿をブースト`,
+		`href="/remote?actor=https%3a%2f%2fexample.com%2fusers%2fsomeone">someone</a> の投稿をRT`,
 		// ブーストの日時は元投稿ではなく Announce 自身にリンクする。
 		`href="https://s.nna774.net/announce/123"`,
 	} {

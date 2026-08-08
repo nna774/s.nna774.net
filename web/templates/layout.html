@@ -223,24 +223,24 @@ function unlikeStatus(e, object, actor, localPart) {
 
 function boostStatus(e, object, actor, localPart) {
   e.preventDefault();
-  if (!confirm('この投稿をブーストする。よいか')) return;
+  if (!confirm('この投稿をRTする。よいか')) return;
   var anchor = e.currentTarget;
   postReaction('/u/' + localPart + '/boosts', object, actor)
     .then(r => {
       if (!r.ok) throw new Error();
-      replaceReactionLink(anchor, 'ブースト済み', function (e) { unboostStatus(e, object, actor, localPart); });
+      replaceReactionLink(anchor, 'RT済み', function (e) { unboostStatus(e, object, actor, localPart); });
     })
-    .catch(() => alert('ブーストに失敗しました'));
+    .catch(() => alert('RTに失敗しました'));
 }
 
 function unboostStatus(e, object, actor, localPart) {
   e.preventDefault();
-  if (!confirm('ブーストを取り消す。よいか')) return;
+  if (!confirm('RTを取り消す。よいか')) return;
   var anchor = e.currentTarget;
   deleteReaction('/u/' + localPart + '/boosts', object)
     .then(r => {
       if (!r.ok) throw new Error();
-      replaceReactionLink(anchor, 'ブースト', function (e) { boostStatus(e, object, actor, localPart); });
+      replaceReactionLink(anchor, 'RT', function (e) { boostStatus(e, object, actor, localPart); });
     })
     .catch(() => alert('取り消しに失敗しました'));
 }
@@ -250,7 +250,7 @@ function unboostStatus(e, object, actor, localPart) {
 // 消える）ので、その場に留めず一覧へ移動する。
 function cancelBoostAndLeave(e, object, localPart) {
   e.preventDefault();
-  if (!confirm('ブーストを取り消す。よいか')) return;
+  if (!confirm('RTを取り消す。よいか')) return;
   deleteReaction('/u/' + localPart + '/boosts', object)
     .then(r => r.ok ? (location.href = '/timeline') : alert('取り消しに失敗しました'))
     .catch(() => alert('取り消しに失敗しました'));

@@ -1,6 +1,6 @@
 {{define "meta"}}
 <meta property="og:type" content="article">
-<meta property="og:title" content="{{.SiteName}} のブースト">
+<meta property="og:title" content="{{.SiteName}} のRT">
 <meta property="og:url" content="{{.AnnounceURI}}">
 <meta property="og:description" content="{{.Excerpt}}">
 {{if .IconURL}}<meta property="og:image" content="{{.IconURL}}">{{end}}
@@ -8,7 +8,7 @@
 {{end}}
 
 {{define "content"}}
-<div class="boosted">{{.SiteName}} がブースト</div>
+<div class="boosted">{{.SiteName}} がRT</div>
 <article>
   <div class="who">
     {{if .IconURL}}<img src="{{.IconURL}}" alt="">{{end}}

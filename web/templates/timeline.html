@@ -22,7 +22,7 @@
   {{range .Items}}
     <article>
       {{if .BoostedByURI}}
-        <div class="boosted"><a href="/remote?actor={{.BoostedByURI}}">{{.BoostedByName}}</a> がブースト</div>
+        <div class="boosted"><a href="/remote?actor={{.BoostedByURI}}">{{.BoostedByName}}</a> がRT</div>
       {{end}}
       <div class="who">
         {{if .IconURL}}<img src="{{.IconURL}}" alt="">{{end}}
@@ -65,9 +65,9 @@
           <a href="#" onclick="likeStatus(event, '{{.ObjectURI}}', '{{.AuthorURI}}', '{{$.LocalPart}}')">いいね</a>
         {{end}}
         {{if .Boosted}}
-          <a href="#" onclick="unboostStatus(event, '{{.ObjectURI}}', '{{.AuthorURI}}', '{{$.LocalPart}}')">ブースト済み</a>
+          <a href="#" onclick="unboostStatus(event, '{{.ObjectURI}}', '{{.AuthorURI}}', '{{$.LocalPart}}')">RT済み</a>
         {{else}}
-          <a href="#" onclick="boostStatus(event, '{{.ObjectURI}}', '{{.AuthorURI}}', '{{$.LocalPart}}')">ブースト</a>
+          <a href="#" onclick="boostStatus(event, '{{.ObjectURI}}', '{{.AuthorURI}}', '{{$.LocalPart}}')">RT</a>
         {{end}}
         {{if .Mine}}
           <a href="#" onclick="deleteStatus(event, '{{.StatusID}}', '{{$.LocalPart}}')">削除</a>
