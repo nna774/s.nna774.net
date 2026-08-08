@@ -439,7 +439,7 @@ func TestAnnouncePageRendersActionsWhenAuthed(t *testing.T) {
 	for _, want := range []string{
 		`href="https://s.nna774.net/announce/123"`,
 		`likeStatus(event, 'https:\/\/example.com\/status\/1', 'https:\/\/example.com\/users\/someone', 'nana')`,
-		`unboostStatus(event, 'https:\/\/example.com\/status\/1', 'nana')`,
+		`cancelBoostAndLeave(event, 'https:\/\/example.com\/status\/1', 'nana')`,
 	} {
 		if !strings.Contains(html, want) {
 			t.Errorf("rendered page does not contain %q:\n%s", want, html)
@@ -463,9 +463,9 @@ func TestAnnouncePageHidesActionsWhenNotAuthed(t *testing.T) {
 		t.Fatalf("rendering announce failed: %v", err)
 	}
 	html := buf.String()
-	// layout.html の <script> は likeStatus/unboostStatus の関数定義を常に
-	// 含むため、呼び出し ("event, " 付き) の有無で判定する。
-	for _, notWant := range []string{"likeStatus(event,", "unboostStatus(event,"} {
+	// layout.html の <script> は likeStatus/cancelBoostAndLeave の関数定義を
+	// 常に含むため、呼び出し ("event, " 付き) の有無で判定する。
+	for _, notWant := range []string{"likeStatus(event,", "cancelBoostAndLeave(event,"} {
 		if strings.Contains(html, notWant) {
 			t.Errorf("rendered page unexpectedly contains %q:\n%s", notWant, html)
 		}

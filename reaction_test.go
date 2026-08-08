@@ -124,8 +124,8 @@ func TestTimelinePageRendersReactionButtons(t *testing.T) {
 	for _, want := range []string{
 		`likeStatus(event, 'https:\/\/example.com\/status\/1', 'https:\/\/example.com\/users\/someone', 'nana')`,
 		`boostStatus(event, 'https:\/\/example.com\/status\/1', 'https:\/\/example.com\/users\/someone', 'nana')`,
-		`unlikeStatus(event, 'https:\/\/example.com\/status\/2', 'nana')`,
-		`unboostStatus(event, 'https:\/\/example.com\/status\/2', 'nana')`,
+		`unlikeStatus(event, 'https:\/\/example.com\/status\/2', 'https:\/\/example.com\/users\/other', 'nana')`,
+		`unboostStatus(event, 'https:\/\/example.com\/status\/2', 'https:\/\/example.com\/users\/other', 'nana')`,
 	} {
 		if !strings.Contains(html, want) {
 			t.Errorf("rendered page does not contain %q", want)

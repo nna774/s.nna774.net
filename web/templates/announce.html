@@ -41,11 +41,11 @@
     <a href="{{.AnnounceURI}}">{{datetime .Published}}</a>
     {{if .Authed}}
       {{if .Liked}}
-        <a href="#" onclick="unlikeStatus(event, '{{.ObjectURI}}', '{{.LocalPart}}')">いいね済み</a>
+        <a href="#" onclick="unlikeStatus(event, '{{.ObjectURI}}', '{{.AuthorURI}}', '{{.LocalPart}}')">いいね済み</a>
       {{else}}
         <a href="#" onclick="likeStatus(event, '{{.ObjectURI}}', '{{.AuthorURI}}', '{{.LocalPart}}')">いいね</a>
       {{end}}
-      <a href="#" onclick="unboostStatus(event, '{{.ObjectURI}}', '{{.LocalPart}}')">取り消し</a>
+      <a href="#" onclick="cancelBoostAndLeave(event, '{{.ObjectURI}}', '{{.LocalPart}}')">取り消し</a>
     {{end}}
   </div>
 </article>
