@@ -47,7 +47,7 @@ func idsOf(entries []datastore.Entry) []int {
 	return ids
 }
 
-func TestStatusesSlice(t *testing.T) {
+func TestPaginateEntries(t *testing.T) {
 	cases := []struct {
 		name        string
 		entries     []datastore.Entry
@@ -101,7 +101,7 @@ func TestStatusesSlice(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			got, hasNext := statusesSlice(c.entries, c.skip, c.perPage)
+			got, hasNext := paginate(c.entries, c.skip, c.perPage)
 			gotIDs := idsOf(got)
 			if len(gotIDs) != len(c.wantIDs) {
 				t.Fatalf("got %v, want %v", gotIDs, c.wantIDs)
@@ -142,6 +142,41 @@ func TestStatusesPageRender(t *testing.T) {
 		"/u/nana/status?page=1",
 		"/u/nana/status?page=3",
 		"こんにちは",
+	} {
+		if !strings.Contains(html, want) {
+			t.Errorf("rendered page does not contain %q", want)
+		}
+	}
+}
+
+// /u/:user/status にも自分のブーストが「著者名 の投稿をブースト」の形で
+// 混ざり、日時は元投稿ではなく Announce 自身にリンクされることを確かめる。
+func TestStatusesPageRendersBoosts(t *testing.T) {
+	page := statusesPage{
+		pageBase: pageBase{Title: "投稿", SiteName: "nana", LocalPart: "nana", Handle: "@nana"},
+		Statuses: []statusesItem{
+			{StatusID: 7, Content: "<p>自分の投稿</p>", Published: "2026-08-03T12:00:00Z"},
+			{
+				Content:     "<p>他人の投稿</p>",
+				Published:   "2026-08-03T13:00:00Z",
+				Boosted:     true,
+				AuthorName:  "someone",
+				AuthorURI:   "https://example.com/users/someone",
+				AnnounceURI: "https://s.nna774.net/announce/123",
+			},
+		},
+	}
+	buf := &bytes.Buffer{}
+	if err := web.Render(buf, "statuses", page); err != nil {
+		t.Fatalf("rendering statuses failed: %v", err)
+	}
+	html := buf.String()
+	for _, want := range []string{
+		"自分の投稿",
+		"他人の投稿",
+		`href="/remote?actor=https%3a%2f%2fexample.com%2fusers%2fsomeone">someone</a> の投稿をブースト`,
+		`href="https://s.nna774.net/announce/123"`,
+		`/u/nana/status/7`,
 	} {
 		if !strings.Contains(html, want) {
 			t.Errorf("rendered page does not contain %q", want)
