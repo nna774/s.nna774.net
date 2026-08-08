@@ -149,6 +149,58 @@ func TestStatusesPageRender(t *testing.T) {
 	}
 }
 
+// 絞り込みリンクは、選択中のものだけリンクにならない (アクティブ表示)。
+// 選択されていないと通常のリンクが出る。
+func TestStatusesPageRendersFilterLinks(t *testing.T) {
+	page := statusesPage{
+		pageBase: pageBase{Title: "投稿", SiteName: "nana", LocalPart: "nana", Handle: "@nana"},
+		Filter:   statusFilterBoosts,
+	}
+	buf := &bytes.Buffer{}
+	if err := web.Render(buf, "statuses", page); err != nil {
+		t.Fatalf("rendering statuses failed: %v", err)
+	}
+	html := buf.String()
+	for _, want := range []string{
+		`<a href="/u/nana/status">すべて</a>`,
+		`<b>ブーストのみ</b>`,
+		`<a href="/u/nana/status?filter=media">メディアのみ</a>`,
+	} {
+		if !strings.Contains(html, want) {
+			t.Errorf("rendered page does not contain %q:\n%s", want, html)
+		}
+	}
+	if strings.Contains(html, `<a href="/u/nana/status?filter=boosts">`) {
+		t.Errorf("active filter should not be a link:\n%s", html)
+	}
+}
+
+// ページャは選択中の絞り込みを引き継ぐ。
+func TestStatusesPagePagerCarriesFilter(t *testing.T) {
+	page := statusesPage{
+		pageBase: pageBase{Title: "投稿", SiteName: "nana", LocalPart: "nana", Handle: "@nana"},
+		Filter:   statusFilterMedia,
+		Page:     2,
+		PrevPage: 1,
+		NextPage: 3,
+		HasPrev:  true,
+		HasNext:  true,
+	}
+	buf := &bytes.Buffer{}
+	if err := web.Render(buf, "statuses", page); err != nil {
+		t.Fatalf("rendering statuses failed: %v", err)
+	}
+	html := buf.String()
+	for _, want := range []string{
+		`href="/u/nana/status?page=1&filter=media"`,
+		`href="/u/nana/status?page=3&filter=media"`,
+	} {
+		if !strings.Contains(html, want) {
+			t.Errorf("rendered page does not contain %q:\n%s", want, html)
+		}
+	}
+}
+
 // /u/:user/status にも自分のブーストが「著者名 の投稿をブースト」の形で
 // 混ざり、日時は元投稿ではなく Announce 自身にリンクされることを確かめる。
 func TestStatusesPageRendersBoosts(t *testing.T) {

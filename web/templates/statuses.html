@@ -1,6 +1,12 @@
 {{define "content"}}
 <h2 class="page-title">{{.SiteName}} の投稿</h2>
 
+<div class="counts">
+  {{if eq .Filter ""}}<b>すべて</b>{{else}}<a href="/u/{{.LocalPart}}/status">すべて</a>{{end}}
+  ・ {{if eq .Filter "boosts"}}<b>ブーストのみ</b>{{else}}<a href="/u/{{.LocalPart}}/status?filter=boosts">ブーストのみ</a>{{end}}
+  ・ {{if eq .Filter "media"}}<b>メディアのみ</b>{{else}}<a href="/u/{{.LocalPart}}/status?filter=media">メディアのみ</a>{{end}}
+</div>
+
 {{if .Statuses}}
   {{range .Statuses}}
     <article>
@@ -38,8 +44,8 @@
 {{end}}
 
 <nav class="pager">
-  {{if .HasPrev}}<a href="/u/{{.LocalPart}}/status?page={{.PrevPage}}">← 新しい</a>{{end}}
+  {{if .HasPrev}}<a href="/u/{{.LocalPart}}/status?page={{.PrevPage}}{{if .Filter}}&filter={{.Filter}}{{end}}">← 新しい</a>{{end}}
   <span>{{.Page}} ページ目</span>
-  {{if .HasNext}}<a href="/u/{{.LocalPart}}/status?page={{.NextPage}}">古い →</a>{{end}}
+  {{if .HasNext}}<a href="/u/{{.LocalPart}}/status?page={{.NextPage}}{{if .Filter}}&filter={{.Filter}}{{end}}">古い →</a>{{end}}
 </nav>
 {{end}}

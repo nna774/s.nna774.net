@@ -241,6 +241,7 @@ type statusesItem struct {
 type statusesPage struct {
 	pageBase
 	Statuses []statusesItem
+	Filter   string
 	Page     int
 	PrevPage int
 	NextPage int
@@ -249,6 +250,22 @@ type statusesPage struct {
 }
 
 const statusesPerPage = 20
+
+// 投稿一覧の絞り込み。空文字はすべて。
+const (
+	statusFilterAll    = ""
+	statusFilterBoosts = "boosts"
+	statusFilterMedia  = "media"
+)
+
+// statusesMediaScanLimit は絞り込み "media" のときに outbox を遡る上限。
+// 添付ファイル付き投稿はまばらなので、1ページ分集めるのに通常の take 件
+// では足りないことがある。かといって際限なく遡ると投稿数が増えたときに
+// 重くなるため、固定の上限で妥協する (myRecentBoosts の
+// profileBoostScanLimit と同じ考え方)。投稿がこの件数を超えて疎らに
+// メディア付きだと、実際にはまだ後続ページがあるのに「無い」と出ることが
+// ありうる。
+const statusesMediaScanLimit = 500
 
 // statusesRange は page ページ目を出すのに必要な取得件数と、取ったうち
 // 読み飛ばす先頭の件数を返す。DynamoDB の Query は「n 件目から」を指定
@@ -264,7 +281,8 @@ func statusesRange(page, perPage int) (take, skip int) {
 
 // statusesHandler は自分の投稿とブーストを古い方まで遡れる一覧を出す。
 // プロフィールは最新 profileStatusCount 件しか出さないので、その先を
-// 見るための入り口。
+// 見るための入り口。filter クエリパラメータでブースト・添付ファイル付きに
+// 絞り込める。
 func statusesHandler(w http.ResponseWriter, r *http.Request) httperror.HttpError {
 	ctx := r.Context()
 
@@ -275,29 +293,50 @@ func statusesHandler(w http.ResponseWriter, r *http.Request) httperror.HttpError
 	if pageNum < 1 {
 		return httperror.StatusUnprocessableEntity("page must be 1 or greater", nil)
 	}
-
-	take, skip := statusesRange(pageNum, statusesPerPage)
-	entries, err := client.TakeEntries(ctx, outboxKey, datastore.Inf, take, datastore.Desc)
-	if err != nil && !errors.Is(err, datastore.ErrNotFound) {
-		return httperror.StatusInternalServerError("cannot read the outbox", err)
+	filter, err := flattenParam(r, "filter")
+	if err != nil {
+		return httperror.StatusUnprocessableEntity("bad filter", err)
+	}
+	if filter != statusFilterAll && filter != statusFilterBoosts && filter != statusFilterMedia {
+		return httperror.StatusUnprocessableEntity("unknown filter: "+filter, nil)
 	}
 
-	items := make([]statusesItem, 0, len(entries))
-	for _, e := range entries {
-		// outbox に入っているのは Create なので、中身の Note を取り出す。
-		note := e.Object.Object.Item()
-		if note == nil {
-			continue
+	take, skip := statusesRange(pageNum, statusesPerPage)
+
+	items := make([]statusesItem, 0, statusesPerPage*2)
+
+	// ブーストだけを見たいときは outbox を読む必要が無い。
+	if filter != statusFilterBoosts {
+		outboxTake := take
+		// メディア付きはまばらなので、通常の take では 1 ページ分すら
+		// 集まらないことがある。上限まで多めに読んで Go 側でふるいにかける。
+		if filter == statusFilterMedia {
+			outboxTake = statusesMediaScanLimit
 		}
-		items = append(items, statusesItem{
-			StatusID:    e.ID,
-			Content:     note.Content,
-			Attachments: noteAttachments(note),
-			Published:   note.Published,
-			ObjectURI:   note.ID,
-			InReplyTo:   note.InReplyTo.ID(),
-			sortKey:     publishedTime(note.Published),
-		})
+		entries, err := client.TakeEntries(ctx, outboxKey, datastore.Inf, outboxTake, datastore.Desc)
+		if err != nil && !errors.Is(err, datastore.ErrNotFound) {
+			return httperror.StatusInternalServerError("cannot read the outbox", err)
+		}
+		for _, e := range entries {
+			// outbox に入っているのは Create なので、中身の Note を取り出す。
+			note := e.Object.Object.Item()
+			if note == nil {
+				continue
+			}
+			attachments := noteAttachments(note)
+			if filter == statusFilterMedia && len(attachments) == 0 {
+				continue
+			}
+			items = append(items, statusesItem{
+				StatusID:    e.ID,
+				Content:     note.Content,
+				Attachments: attachments,
+				Published:   note.Published,
+				ObjectURI:   note.ID,
+				InReplyTo:   note.InReplyTo.ID(),
+				sortKey:     publishedTime(note.Published),
+			})
+		}
 	}
 
 	// KVMyBoosts は自分の現在のブーストだけを持つ (誰かに配ったタイムライン
@@ -319,9 +358,13 @@ func statusesHandler(w http.ResponseWriter, r *http.Request) httperror.HttpError
 			if note == nil {
 				continue
 			}
+			attachments := noteAttachments(note)
+			if filter == statusFilterMedia && len(attachments) == 0 {
+				continue
+			}
 			items = append(items, statusesItem{
 				Content:     note.Content,
-				Attachments: noteAttachments(note),
+				Attachments: attachments,
 				Published:   act.Published,
 				ObjectURI:   note.ID,
 				InReplyTo:   note.InReplyTo.ID(),
@@ -334,15 +377,17 @@ func statusesHandler(w http.ResponseWriter, r *http.Request) httperror.HttpError
 		}
 	}
 
-	// 新しい順に並べ直してからページを切り出す。outbox は take で絞って
-	// あるが、ブーストは全件候補にしてあるので、深いページでも取りこぼさ
-	// ない (timelineHandler と同じ「多めに取って捨てる」考え方)。
+	// 新しい順に並べ直してからページを切り出す。outbox は take (または
+	// statusesMediaScanLimit) で絞ってあるが、ブーストは全件候補にして
+	// あるので、深いページでも取りこぼさない (timelineHandler と同じ
+	// 「多めに取って捨てる」考え方)。
 	sort.SliceStable(items, func(i, j int) bool { return items[i].sortKey.After(items[j].sortKey) })
 	items, hasNext := paginate(items, skip, statusesPerPage)
 
 	page := statusesPage{
 		pageBase: newPageBase(r, Config.Name+" の投稿"),
 		Statuses: items,
+		Filter:   filter,
 		Page:     pageNum,
 		PrevPage: pageNum - 1,
 		NextPage: pageNum + 1,
