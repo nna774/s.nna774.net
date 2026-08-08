@@ -403,6 +403,8 @@ func newRouter() *httprouter.Router {
 	pub(r, http.MethodGet, "/u/:user/outbox/page", outboxPageHandler)
 	pub(r, http.MethodGet, "/u/:user/status", statusesHandler)
 	pub(r, http.MethodGet, "/u/:user/status/:id", statusHandler)
+	pub(r, http.MethodGet, "/u/:user/status/:id/likes", statusLikesHandler)
+	pub(r, http.MethodGet, "/u/:user/status/:id/announces", statusAnnouncesHandler)
 	// newActivityID が発行する Announce.ID (origin/announce/<nano>) を
 	// 引けるようにする。/u/:user 配下ではない (newActivityID がそう
 	// 発行しているため)。

@@ -128,6 +128,18 @@ func announceHandler(w http.ResponseWriter, r *http.Request, in *activitystream.
 	if isMyStatus(target) {
 		// 自分の投稿は outbox 経由で既にタイムラインに出ている。ここで
 		// 積むと同じものが二重に並ぶ。通知にだけ出す。
+		//
+		// 誰がブーストしたかは通知とは別に KVAnnounced にも残す。通知は
+		// notificationScanLimit を超えると遡れなくなるが、/status/:id の
+		// 「N件のブースト」一覧はいつまでも正しい件数を出したい。
+		if err := client.PutKV(ctx, &datastore.KVItem{
+			PK:         datastore.KVAnnounced,
+			SK:         target + "#" + in.Actor.ID(),
+			ActivityID: in.ID,
+			At:         nowRFC3339(),
+		}); err != nil {
+			return httperror.StatusInternalServerError("cannot record the Announce", err)
+		}
 		notifyOrLog(ctx, in)
 		logf("%v boosted %v", in.Actor.ID(), target)
 		respondText(w, http.StatusAccepted, "accepted\n")
@@ -446,6 +458,10 @@ func undoHandler(w http.ResponseWriter, r *http.Request, in *activitystream.Obje
 		if inner.Type == activitystream.LikeType {
 			if err := client.DeleteKV(ctx, datastore.KVLikes, target+"#"+actorID); err != nil {
 				logf("removing the Like of %v by %v failed: %v", target, actorID, err)
+			}
+		} else {
+			if err := client.DeleteKV(ctx, datastore.KVAnnounced, target+"#"+actorID); err != nil {
+				logf("removing the Announce of %v by %v failed: %v", target, actorID, err)
 			}
 		}
 		// 取り消し自体を出来事として積む。元の通知を消す実装にすると、
