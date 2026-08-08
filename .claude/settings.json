@@ -1,0 +1,13 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(sam deploy --region ap-northeast-1 --s3-bucket nana-lambda --template-file template.yml --stack-name s-nna774-net --capabilities CAPABILITY_IAM)"
+    ]
+  },
+  "autoMode": {
+    "allow": [
+      "$defaults",
+      "Bash(sam deploy --region ap-northeast-1 --s3-bucket nana-lambda --template-file template.yml --stack-name s-nna774-net --capabilities CAPABILITY_IAM)"
+    ]
+  }
+}
