@@ -81,6 +81,7 @@ func TestReactionRoutes(t *testing.T) {
 		{http.MethodPost, "/u/nana/boosts"},
 		{http.MethodDelete, "/u/nana/boosts"},
 		{http.MethodGet, "/u/nana/favorites"},
+		{http.MethodGet, "/announce/123"},
 	}
 	for _, c := range cases {
 		h, _, _ := r.Lookup(c.method, c.path)
@@ -129,6 +130,37 @@ func TestTimelinePageRendersReactionButtons(t *testing.T) {
 		if !strings.Contains(html, want) {
 			t.Errorf("rendered page does not contain %q", want)
 		}
+	}
+}
+
+// ブーストされた投稿の日時は、元投稿ではなく Announce 自身の URI に
+// リンクされる (Twitter のリツイート個別ページに相当)。
+func TestTimelinePageLinksBoostDatetimeToAnnounce(t *testing.T) {
+	page := timelinePage{
+		pageBase: pageBase{Title: "タイムライン", SiteName: "nana", LocalPart: "nana", Handle: "@nana"},
+		Items: []timelineItem{
+			{
+				AuthorName:    "someone",
+				AuthorURI:     "https://example.com/users/someone",
+				ObjectURI:     "https://example.com/status/1",
+				Content:       "<p>ブースト</p>",
+				Published:     "2026-08-03T12:00:00Z",
+				BoostedByURI:  "https://s.nna774.net/u/nana",
+				BoostedByName: "nana",
+				AnnounceURI:   "https://s.nna774.net/announce/123",
+			},
+		},
+	}
+	buf := &bytes.Buffer{}
+	if err := web.Render(buf, "timeline", page); err != nil {
+		t.Fatalf("rendering timeline failed: %v", err)
+	}
+	html := buf.String()
+	if !strings.Contains(html, `href="https://s.nna774.net/announce/123"`) {
+		t.Errorf("rendered page does not link the datetime to the announce URI:\n%s", html)
+	}
+	if strings.Contains(html, `href="https://example.com/status/1">2026`) {
+		t.Errorf("rendered page still links the datetime to the boosted note directly:\n%s", html)
 	}
 }
 

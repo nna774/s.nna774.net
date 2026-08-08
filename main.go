@@ -403,6 +403,10 @@ func newRouter() *httprouter.Router {
 	pub(r, http.MethodGet, "/u/:user/outbox/page", outboxPageHandler)
 	pub(r, http.MethodGet, "/u/:user/status", statusesHandler)
 	pub(r, http.MethodGet, "/u/:user/status/:id", statusHandler)
+	// newActivityID が発行する Announce.ID (origin/announce/<nano>) を
+	// 引けるようにする。/u/:user 配下ではない (newActivityID がそう
+	// 発行しているため)。
+	pub(r, http.MethodGet, "/announce/:id", announceStatusHandler)
 	pub(r, http.MethodGet, "/u/:user/followers", collectionHandler(datastore.KVFollowers, followersURI, "フォロワー"))
 	pub(r, http.MethodGet, "/u/:user/following", collectionHandler(datastore.KVFollowing, followingURI, "フォロー中"))
 	pub(r, http.MethodGet, "/u/:user/favorites", favoritesHandler)

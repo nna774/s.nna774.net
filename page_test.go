@@ -301,12 +301,13 @@ func TestProfilePageRendersBoosts(t *testing.T) {
 		Statuses: []profileStatusItem{
 			{Content: "<p>自分の投稿</p>", URL: "https://s.nna774.net/u/nana/status/1", Published: "2026-08-03T12:00:00Z"},
 			{
-				Content:    "<p>他人の投稿</p>",
-				URL:        "https://example.com/status/1",
-				Published:  "2026-08-03T13:00:00Z",
-				Boosted:    true,
-				AuthorName: "someone",
-				AuthorURI:  "https://example.com/users/someone",
+				Content:     "<p>他人の投稿</p>",
+				URL:         "https://example.com/status/1",
+				Published:   "2026-08-03T13:00:00Z",
+				Boosted:     true,
+				AuthorName:  "someone",
+				AuthorURI:   "https://example.com/users/someone",
+				AnnounceURI: "https://s.nna774.net/announce/123",
 			},
 		},
 	}
@@ -322,9 +323,64 @@ func TestProfilePageRendersBoosts(t *testing.T) {
 		"自分の投稿",
 		"他人の投稿",
 		`href="/remote?actor=https%3a%2f%2fexample.com%2fusers%2fsomeone">someone</a> の投稿をブースト`,
+		// ブーストの日時は元投稿ではなく Announce 自身にリンクする。
+		`href="https://s.nna774.net/announce/123"`,
 	} {
 		if !strings.Contains(html, want) {
 			t.Errorf("rendered page does not contain %q", want)
+		}
+	}
+}
+
+// announce ページは認証されているときだけいいね・取り消しリンクを出す。
+func TestAnnouncePageRendersActionsWhenAuthed(t *testing.T) {
+	page := announcePage{
+		pageBase:    pageBase{Title: "boost", SiteName: "nana", LocalPart: "nana", Handle: "@nana", Authed: true},
+		AnnounceURI: "https://s.nna774.net/announce/123",
+		Name:        "someone",
+		AuthorURI:   "https://example.com/users/someone",
+		Content:     "<p>ブーストされた投稿</p>",
+		Published:   "2026-08-03T12:00:00Z",
+		ObjectURI:   "https://example.com/status/1",
+		Liked:       false,
+	}
+	buf := &bytes.Buffer{}
+	if err := web.Render(buf, "announce", page); err != nil {
+		t.Fatalf("rendering announce failed: %v", err)
+	}
+	html := buf.String()
+	for _, want := range []string{
+		`href="https://s.nna774.net/announce/123"`,
+		`likeStatus(event, 'https:\/\/example.com\/status\/1', 'https:\/\/example.com\/users\/someone', 'nana')`,
+		`unboostStatus(event, 'https:\/\/example.com\/status\/1', 'nana')`,
+	} {
+		if !strings.Contains(html, want) {
+			t.Errorf("rendered page does not contain %q:\n%s", want, html)
+		}
+	}
+}
+
+// 未認証では、いいね・取り消しのリンクを出さない。
+func TestAnnouncePageHidesActionsWhenNotAuthed(t *testing.T) {
+	page := announcePage{
+		pageBase:    pageBase{Title: "boost", SiteName: "nana", LocalPart: "nana", Handle: "@nana", Authed: false},
+		AnnounceURI: "https://s.nna774.net/announce/123",
+		Name:        "someone",
+		AuthorURI:   "https://example.com/users/someone",
+		Content:     "<p>ブーストされた投稿</p>",
+		Published:   "2026-08-03T12:00:00Z",
+		ObjectURI:   "https://example.com/status/1",
+	}
+	buf := &bytes.Buffer{}
+	if err := web.Render(buf, "announce", page); err != nil {
+		t.Fatalf("rendering announce failed: %v", err)
+	}
+	html := buf.String()
+	// layout.html の <script> は likeStatus/unboostStatus の関数定義を常に
+	// 含むため、呼び出し ("event, " 付き) の有無で判定する。
+	for _, notWant := range []string{"likeStatus(event,", "unboostStatus(event,"} {
+		if strings.Contains(html, notWant) {
+			t.Errorf("rendered page unexpectedly contains %q:\n%s", notWant, html)
 		}
 	}
 }
