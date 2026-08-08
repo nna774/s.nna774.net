@@ -151,6 +151,9 @@ func boostRequestHandler(w http.ResponseWriter, r *http.Request) httperror.HttpE
 		newActivityID("announce"), Config.ID(), object,
 		[]string{activitystream.ToPublic}, []string{followersURI(), actorURI})
 	announce.Object = activitystream.ObjectRef(note)
+	// timelineHandler はブーストの並び順にこの時刻を使う。空だと「解釈できない
+	// published」として末尾に落ち、ブーストしたのに一番上に出てこなくなる。
+	announce.Published = nowRFC3339()
 
 	// 配信より先に保存する。逆順だと、配信されたのに自分のタイムラインには
 	// 出ていないブーストができてしまう。
