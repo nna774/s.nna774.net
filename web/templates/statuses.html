@@ -4,6 +4,9 @@
 {{if .Statuses}}
   {{range .Statuses}}
     <article>
+      {{if .Boosted}}
+        <div class="boosted"><a href="/remote?actor={{.AuthorURI}}">{{.AuthorName}}</a> の投稿をブースト</div>
+      {{end}}
       {{with .InReplyTo}}<div class="reply-to">返信: <a href="{{.}}">{{.}}</a></div>{{end}}
       <div class="body">{{sanitize .Content}}</div>
       {{if .Attachments}}
@@ -22,7 +25,11 @@
         </div>
       {{end}}
       <div class="meta">
-        <a href="/u/{{$.LocalPart}}/status/{{.StatusID}}">{{datetime .Published}}</a>
+        {{if .Boosted}}
+          <a href="{{.AnnounceURI}}">{{datetime .Published}}</a>
+        {{else}}
+          <a href="/u/{{$.LocalPart}}/status/{{.StatusID}}">{{datetime .Published}}</a>
+        {{end}}
       </div>
     </article>
   {{end}}

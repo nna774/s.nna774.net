@@ -82,8 +82,10 @@ type profilePage struct {
 	Fields          activitystream.Objects
 	Statuses        []profileStatusItem
 	// HasMore はプロフィールに出し切れなかった投稿があることを示す。
-	// 立っているときだけ投稿一覧へのリンクを出す。自分のブーストは対象外
-	// (投稿一覧ページ自体が自分の Note しか出さないため)。
+	// 立っているときだけ投稿一覧へのリンクを出す。自分の Note の件数だけで
+	// 判定しており、ブーストの分は数えていない (myRecentBoosts が全件では
+	// なく直近 profileBoostScanLimit 件までしか遡らないため、正確な件数を
+	// 出せない)。
 	HasMore bool
 }
 
@@ -226,6 +228,14 @@ type statusesItem struct {
 	Published   string
 	ObjectURI   string
 	InReplyTo   string
+	// Boosted / AuthorName / AuthorURI / AnnounceURI は自分がブーストした
+	// 他人の投稿のときだけ入る。profileStatusItem と同じ役割。
+	Boosted     bool
+	AuthorName  string
+	AuthorURI   string
+	AnnounceURI string
+	// sortKey は投稿とブーストを混ぜて並べ替えるために使う。
+	sortKey time.Time
 }
 
 type statusesPage struct {
@@ -252,8 +262,9 @@ func statusesRange(page, perPage int) (take, skip int) {
 	return page*perPage + 1, (page - 1) * perPage
 }
 
-// statusesHandler は自分の投稿を古い方まで遡れる一覧を出す。プロフィールは
-// 最新 profileStatusCount 件しか出さないので、その先を見るための入り口。
+// statusesHandler は自分の投稿とブーストを古い方まで遡れる一覧を出す。
+// プロフィールは最新 profileStatusCount 件しか出さないので、その先を
+// 見るための入り口。
 func statusesHandler(w http.ResponseWriter, r *http.Request) httperror.HttpError {
 	ctx := r.Context()
 
@@ -270,7 +281,6 @@ func statusesHandler(w http.ResponseWriter, r *http.Request) httperror.HttpError
 	if err != nil && !errors.Is(err, datastore.ErrNotFound) {
 		return httperror.StatusInternalServerError("cannot read the outbox", err)
 	}
-	entries, hasNext := statusesSlice(entries, skip, statusesPerPage)
 
 	items := make([]statusesItem, 0, len(entries))
 	for _, e := range entries {
@@ -286,8 +296,49 @@ func statusesHandler(w http.ResponseWriter, r *http.Request) httperror.HttpError
 			Published:   note.Published,
 			ObjectURI:   note.ID,
 			InReplyTo:   note.InReplyTo.ID(),
+			sortKey:     publishedTime(note.Published),
 		})
 	}
+
+	// KVMyBoosts は自分の現在のブーストだけを持つ (誰かに配ったタイムライン
+	// 全体ではない) ので、outbox のように take で絞らず全件読んでよい。
+	// ページを跨いでも取りこぼしが起きないよう、常に全部を候補にする。
+	if boosts, err := client.QueryKV(ctx, datastore.KVMyBoosts); err != nil {
+		logf("loading my boosts for the status list failed: %v", err)
+	} else {
+		for _, b := range boosts {
+			if b.TimelineID == 0 {
+				continue
+			}
+			act, err := client.GetObject(ctx, timelineKey, b.TimelineID)
+			if err != nil {
+				logf("loading boost %v for the status list failed: %v", b.ActivityID, err)
+				continue
+			}
+			note := act.Object.Item()
+			if note == nil {
+				continue
+			}
+			items = append(items, statusesItem{
+				Content:     note.Content,
+				Attachments: noteAttachments(note),
+				Published:   act.Published,
+				ObjectURI:   note.ID,
+				InReplyTo:   note.InReplyTo.ID(),
+				Boosted:     true,
+				AuthorName:  authorName(ctx, note.AttributedTo.ID()),
+				AuthorURI:   note.AttributedTo.ID(),
+				AnnounceURI: act.ID,
+				sortKey:     publishedTime(act.Published),
+			})
+		}
+	}
+
+	// 新しい順に並べ直してからページを切り出す。outbox は take で絞って
+	// あるが、ブーストは全件候補にしてあるので、深いページでも取りこぼさ
+	// ない (timelineHandler と同じ「多めに取って捨てる」考え方)。
+	sort.SliceStable(items, func(i, j int) bool { return items[i].sortKey.After(items[j].sortKey) })
+	items, hasNext := paginate(items, skip, statusesPerPage)
 
 	page := statusesPage{
 		pageBase: newPageBase(r, Config.Name+" の投稿"),
@@ -299,12 +350,6 @@ func statusesHandler(w http.ResponseWriter, r *http.Request) httperror.HttpError
 		HasNext:  hasNext,
 	}
 	return renderPage(w, "statuses", page)
-}
-
-// statusesSlice は取ってきた分から該当ページを切り出し、次のページが
-// あるかどうかを返す。
-func statusesSlice(entries []datastore.Entry, skip, perPage int) ([]datastore.Entry, bool) {
-	return paginate(entries, skip, perPage)
 }
 
 // paginate は先頭から多めに取ってきたスライスから該当ページ分を切り出し、
