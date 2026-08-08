@@ -186,33 +186,73 @@ function deleteReaction(path, object) {
   return fetch(path + '?object=' + encodeURIComponent(object), { method: 'DELETE' });
 }
 
+// リアクションのリンクを、ページ遷移・再読み込みなしに逆の状態のリンクへ
+// 差し替える。renderFollowStatus と同じ理由で、innerHTML への文字列連結
+// ではなく DOM API で組み立てる（object/actor はリモート actor 由来で
+// 信頼できない）。
+function replaceReactionLink(anchor, label, handler) {
+  var next = document.createElement('a');
+  next.href = '#';
+  next.textContent = label;
+  next.addEventListener('click', handler);
+  anchor.replaceWith(next);
+  return next;
+}
+
 function likeStatus(e, object, actor, localPart) {
   e.preventDefault();
+  var anchor = e.currentTarget;
   postReaction('/u/' + localPart + '/likes', object, actor)
-    .then(r => r.ok ? location.reload() : alert('いいねに失敗しました'))
+    .then(r => {
+      if (!r.ok) throw new Error();
+      replaceReactionLink(anchor, 'いいね済み', function (e) { unlikeStatus(e, object, actor, localPart); });
+    })
     .catch(() => alert('いいねに失敗しました'));
 }
 
-function unlikeStatus(e, object, localPart) {
+function unlikeStatus(e, object, actor, localPart) {
   e.preventDefault();
+  var anchor = e.currentTarget;
   deleteReaction('/u/' + localPart + '/likes', object)
-    .then(r => r.ok ? location.reload() : alert('取り消しに失敗しました'))
+    .then(r => {
+      if (!r.ok) throw new Error();
+      replaceReactionLink(anchor, 'いいね', function (e) { likeStatus(e, object, actor, localPart); });
+    })
     .catch(() => alert('取り消しに失敗しました'));
 }
 
 function boostStatus(e, object, actor, localPart) {
   e.preventDefault();
   if (!confirm('この投稿をブーストする。よいか')) return;
+  var anchor = e.currentTarget;
   postReaction('/u/' + localPart + '/boosts', object, actor)
-    .then(r => r.ok ? location.reload() : alert('ブーストに失敗しました'))
+    .then(r => {
+      if (!r.ok) throw new Error();
+      replaceReactionLink(anchor, 'ブースト済み', function (e) { unboostStatus(e, object, actor, localPart); });
+    })
     .catch(() => alert('ブーストに失敗しました'));
 }
 
-function unboostStatus(e, object, localPart) {
+function unboostStatus(e, object, actor, localPart) {
+  e.preventDefault();
+  if (!confirm('ブーストを取り消す。よいか')) return;
+  var anchor = e.currentTarget;
+  deleteReaction('/u/' + localPart + '/boosts', object)
+    .then(r => {
+      if (!r.ok) throw new Error();
+      replaceReactionLink(anchor, 'ブースト', function (e) { boostStatus(e, object, actor, localPart); });
+    })
+    .catch(() => alert('取り消しに失敗しました'));
+}
+
+// announce.html（自分のブーストそのものの単独ページ）専用。取り消すと
+// この URL の Announce 自体が消える（announceStatusHandler の裏引きが
+// 消える）ので、その場に留めず一覧へ移動する。
+function cancelBoostAndLeave(e, object, localPart) {
   e.preventDefault();
   if (!confirm('ブーストを取り消す。よいか')) return;
   deleteReaction('/u/' + localPart + '/boosts', object)
-    .then(r => r.ok ? location.reload() : alert('取り消しに失敗しました'))
+    .then(r => r.ok ? (location.href = '/timeline') : alert('取り消しに失敗しました'))
     .catch(() => alert('取り消しに失敗しました'));
 }
 </script>
