@@ -27,8 +27,13 @@ BUILD_DIR := build
 
 DYNAMODB_LOCAL_ENDPOINT := http://localhost:8000
 
+# デプロイされている commit を footer から確認できるよう、build 時の
+# commit hash を埋め込む。
+COMMIT_HASH := $(shell git rev-parse HEAD)
+LDFLAGS := -X main.commitHash=$(COMMIT_HASH)
+
 app:
-	$(GO) build -o $(OUT) .
+	$(GO) build -ldflags "$(LDFLAGS)" -o $(OUT) .
 
 dev: app
 	ENV=development \
@@ -57,7 +62,7 @@ lint:
 # 入れてはならない。
 app-for-deploy: clean
 	mkdir -p $(BUILD_DIR)
-	GOOS=linux GOARCH=arm64 CGO_ENABLED=0 $(GO) build -tags lambda.norpc -o $(BUILD_DIR)/$(BOOTSTRAP) .
+	GOOS=linux GOARCH=arm64 CGO_ENABLED=0 $(GO) build -tags lambda.norpc -ldflags "$(LDFLAGS)" -o $(BUILD_DIR)/$(BOOTSTRAP) .
 	cp config.yml $(BUILD_DIR)/config.yml
 .PHONY: app-for-deploy
 
