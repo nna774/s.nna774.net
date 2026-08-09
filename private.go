@@ -6,9 +6,28 @@ import (
 	"net/url"
 	"strings"
 
+	"github.com/julienschmidt/httprouter"
 	"github.com/nna774/s.nna774.net/auth"
 	"github.com/nna774/s.nna774.net/httperror"
 )
+
+// authenticatorForRequest は要求されている私用エンドポイントに対応する
+// Authenticator を返す。:user を持つ経路 (投稿の作成・削除など) はその
+// Actor 専用のトークンで認証する。bot のトークンで nana のエンドポイントを
+// 叩けたり、その逆が起きたりしないようにするため。:user を持たない経路
+// (timeline・notifications・login 等) は primary actor 専用の機能なので
+// primary の Authenticator を使う。
+func authenticatorForRequest(r *http.Request) *auth.Authenticator {
+	localPart := httprouter.ParamsFromContext(r.Context()).ByName("user")
+	if localPart == "" {
+		return primaryAuthenticator()
+	}
+	actor, ok := Config.ActorByLocalPart(localPart)
+	if !ok {
+		return nil
+	}
+	return authenticatorFor(actor)
+}
 
 // requireAuth は私用エンドポイントを認証で包む。
 //
@@ -20,7 +39,11 @@ import (
 // これで包んではならない。連合が黙って壊れる。
 func requireAuth(mutating bool, next httperror.HandleFuncWithError) httperror.HandleFuncWithError {
 	return func(w http.ResponseWriter, r *http.Request) httperror.HttpError {
-		err := authenticator.Authorize(r, mutating)
+		a := authenticatorForRequest(r)
+		if a == nil {
+			return httperror.StatusNotFound("no such actor", nil)
+		}
+		err := a.Authorize(r, mutating)
 		switch {
 		case err == nil:
 			return next(w, r)
@@ -49,11 +72,11 @@ func postLoginHandler(w http.ResponseWriter, r *http.Request) httperror.HttpErro
 		token = strings.TrimSpace(r.Header.Get("Authorization"))
 		token = strings.TrimPrefix(token, "Bearer ")
 	}
-	if !authenticator.CheckToken(token) {
+	if !primaryAuthenticator().CheckToken(token) {
 		// ログイン失敗は理由を明かさない。
 		return httperror.StatusUnauthorized("login failed", nil)
 	}
-	http.SetCookie(w, authenticator.NewSessionCookie())
+	http.SetCookie(w, primaryAuthenticator().NewSessionCookie())
 
 	if isFormRequest(r) {
 		next := r.PostFormValue("next")
@@ -68,7 +91,7 @@ func postLoginHandler(w http.ResponseWriter, r *http.Request) httperror.HttpErro
 }
 
 func postLogoutHandler(w http.ResponseWriter, r *http.Request) httperror.HttpError {
-	http.SetCookie(w, authenticator.ClearSessionCookie())
+	http.SetCookie(w, primaryAuthenticator().ClearSessionCookie())
 	if isFormRequest(r) {
 		http.Redirect(w, r, "/login", http.StatusSeeOther)
 		return nil

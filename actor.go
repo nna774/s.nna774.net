@@ -17,6 +17,20 @@ import (
 	"github.com/nna774/s.nna774.net/datastore"
 )
 
+// isLocalActor は uri がこのインスタンスの Actor (primary / sub 問わず) の
+// いずれかを指しているかを返す。
+func isLocalActor(uri string) bool {
+	if uri == "" {
+		return false
+	}
+	for _, a := range Config.Actors {
+		if a.ID() == uri {
+			return true
+		}
+	}
+	return false
+}
+
 // actorKeyTTL は公開鍵キャッシュの寿命。鍵が差し替えられたときに
 // 追従できなくなるので永久には持たない。
 const actorKeyTTL = 24 * time.Hour
@@ -26,13 +40,13 @@ const actorKeyTTL = 24 * time.Hour
 const maxRemoteBody = 1 << 20 // 1MiB
 
 // fetchObject はリモートのオブジェクトを取得する。authorized fetch を
-// 有効にしているインスタンスは署名の無い GET を拒否するため、署名して
-// 取りに行く。
-func fetchObject(ctx context.Context, uri string) (*activitystream.Object, error) {
+// 有効にしているインスタンスは署名の無い GET を拒否するため、actor の鍵で
+// 署名して取りに行く。
+func fetchObject(ctx context.Context, actor *config.ActorConfig, uri string) (*activitystream.Object, error) {
 	if !isFetchableURI(uri) {
 		return nil, fmt.Errorf("refusing to fetch %v", uri)
 	}
-	resp, err := signer.GetWithSign(ctx, uri)
+	resp, err := signerFor(actor).GetWithSign(ctx, uri)
 	if err != nil {
 		return nil, fmt.Errorf("fetching %v failed: %w", uri, err)
 	}
@@ -48,8 +62,8 @@ func fetchObject(ctx context.Context, uri string) (*activitystream.Object, error
 }
 
 // fetchActor はリモートの actor を取得する。
-func fetchActor(ctx context.Context, uri string) (*activitystream.Object, error) {
-	return fetchObject(ctx, uri)
+func fetchActor(ctx context.Context, actor *config.ActorConfig, uri string) (*activitystream.Object, error) {
+	return fetchObject(ctx, actor, uri)
 }
 
 // isFetchableURI は取得しに行ってよい URI かを返す。
@@ -90,8 +104,8 @@ const actorInfoTTL = 7 * 24 * time.Hour
 // リクエストが飛び、遅いか落ちているだけで表示が崩れるため。
 //
 // 失敗しても呼び出し側は続行してよい。名前が URI のまま出るだけである。
-func cacheActorInfo(ctx context.Context, actorURI string) {
-	if actorURI == "" || actorURI == Config.ID() {
+func cacheActorInfo(ctx context.Context, actor *config.ActorConfig, actorURI string) {
+	if actorURI == "" || isLocalActor(actorURI) {
 		return
 	}
 	// フォロー関係にある相手は saveFollower が既に持っている。キャッシュ済み
@@ -99,12 +113,12 @@ func cacheActorInfo(ctx context.Context, actorURI string) {
 	if lookupKnownActor(ctx, actorURI) != nil {
 		return
 	}
-	actor, err := fetchActor(ctx, actorURI)
+	remote, err := fetchActor(ctx, actor, actorURI)
 	if err != nil {
 		logf("fetching %v for its display name failed: %v", actorURI, err)
 		return
 	}
-	name, iconURL := actorDisplay(actor)
+	name, iconURL := actorDisplay(remote)
 	if name == "" && iconURL == "" {
 		return
 	}
@@ -126,7 +140,7 @@ func cacheActorInfo(ctx context.Context, actorURI string) {
 // 所有者を一緒に返すのが要点である。keyId の所有者と Activity の actor が
 // 一致することを呼び出し側で検証しないと、自分の鍵で署名しつつ actor だけ
 // 他人を名乗る偽装が通ってしまう。
-func publicKeyForKeyID(ctx context.Context, keyID string) (pem string, owner string, err error) {
+func publicKeyForKeyID(ctx context.Context, requester *config.ActorConfig, keyID string) (pem string, owner string, err error) {
 	if cached, err := client.GetKV(ctx, datastore.KVActorKey, keyID); err == nil {
 		if cached.PublicKeyPem != "" && cached.Owner != "" {
 			return cached.PublicKeyPem, cached.Owner, nil
@@ -142,20 +156,20 @@ func publicKeyForKeyID(ctx context.Context, keyID string) (pem string, owner str
 	if err != nil {
 		return "", "", err
 	}
-	actor, err := fetchActor(ctx, actorURI)
+	remote, err := fetchActor(ctx, requester, actorURI)
 	if err != nil {
 		return "", "", err
 	}
-	if actor.PublicKey == nil || actor.PublicKey.PublicKeyPem == "" {
+	if remote.PublicKey == nil || remote.PublicKey.PublicKeyPem == "" {
 		return "", "", fmt.Errorf("actor %v advertises no public key", actorURI)
 	}
 	// 取得した actor が名乗る鍵の id が、要求された keyId と一致すること。
-	if actor.PublicKey.ID != "" && actor.PublicKey.ID != keyID {
-		return "", "", fmt.Errorf("actor %v advertises key %v, but %v was requested", actorURI, actor.PublicKey.ID, keyID)
+	if remote.PublicKey.ID != "" && remote.PublicKey.ID != keyID {
+		return "", "", fmt.Errorf("actor %v advertises key %v, but %v was requested", actorURI, remote.PublicKey.ID, keyID)
 	}
-	ownerID := actor.PublicKey.Owner
+	ownerID := remote.PublicKey.Owner
 	if ownerID == "" {
-		ownerID = actor.ID
+		ownerID = remote.ID
 	}
 	if ownerID == "" {
 		return "", "", fmt.Errorf("actor %v has no id", actorURI)
@@ -164,14 +178,14 @@ func publicKeyForKeyID(ctx context.Context, keyID string) (pem string, owner str
 	if err := client.PutKV(ctx, &datastore.KVItem{
 		PK:           datastore.KVActorKey,
 		SK:           keyID,
-		PublicKeyPem: actor.PublicKey.PublicKeyPem,
+		PublicKeyPem: remote.PublicKey.PublicKeyPem,
 		Owner:        ownerID,
 		TTL:          time.Now().Add(actorKeyTTL).Unix(),
 	}); err != nil {
 		// キャッシュできなくても検証自体は続けられる。
 		logf("caching actorkey %v failed: %v", keyID, err)
 	}
-	return actor.PublicKey.PublicKeyPem, ownerID, nil
+	return remote.PublicKey.PublicKeyPem, ownerID, nil
 }
 
 // actorURIFromKeyID は keyId からフラグメントを落として actor の URI を作る。

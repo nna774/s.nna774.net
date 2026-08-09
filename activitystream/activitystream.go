@@ -36,6 +36,9 @@ const (
 	OrderedCollectionType     = "OrderedCollection"
 	OrderedCollectionPageType = "OrderedCollectionPage"
 	PersonType                = "Person"
+	// ServiceType は bot 等の自動投稿アカウントを表す。Mastodon 等はこれを
+	// 見て自動化されたアカウントであることを表示する。
+	ServiceType = "Service"
 	// PropertyValueType は ActivityStreams ではなく schema.org 由来だが、
 	// Mastodon がプロフィールの追加情報の表現に使っているため合わせる。
 	PropertyValueType = "PropertyValue"
@@ -273,11 +276,11 @@ func NewPropertyValue(name string, value string) *Object {
 	}
 }
 
-func NewUserResource(id string, name string, iconURI string, iconMediaType string, preferredUsername string, inbox string, outbox string, followers string, following string, summary string, keyID string, publicKey string, attachment Objects) *Object {
+func NewUserResource(id string, actorType string, name string, iconURI string, iconMediaType string, preferredUsername string, inbox string, outbox string, followers string, following string, summary string, keyID string, publicKey string, attachment Objects) *Object {
 	return &Object{
 		Context:    []interface{}{ContextActivityStreams, ContextSecurityV1, propertyValueContext},
 		ID:         id,
-		Type:       PersonType,
+		Type:       actorType,
 		URL:        id,
 		Name:       name,
 		Attachment: attachment,

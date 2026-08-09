@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/nna774/s.nna774.net/activitystream"
+	"github.com/nna774/s.nna774.net/config"
 	"github.com/nna774/s.nna774.net/datastore"
 	"github.com/nna774/s.nna774.net/httperror"
 )
@@ -49,6 +50,7 @@ type remoteProfilePage struct {
 // というのがこのページの動機である。
 func remoteProfileHandler(w http.ResponseWriter, r *http.Request) httperror.HttpError {
 	ctx := r.Context()
+	primary := Config.PrimaryActor()
 	query := strings.TrimSpace(r.URL.Query().Get("actor"))
 
 	page := remoteProfilePage{
@@ -68,7 +70,7 @@ func remoteProfileHandler(w http.ResponseWriter, r *http.Request) httperror.Http
 		page.Error = "そのハンドルまたは URL を解決できなかった: " + err.Error()
 		return renderPage(w, "remote", page)
 	}
-	actor, err := fetchActor(ctx, actorURI)
+	actor, err := fetchActor(ctx, primary, actorURI)
 	if err != nil {
 		page.Error = "相手を取得できなかった: " + err.Error()
 		return renderPage(w, "remote", page)
@@ -78,9 +80,9 @@ func remoteProfileHandler(w http.ResponseWriter, r *http.Request) httperror.Http
 	page.ActorURI = actor.ID
 	page.Name, page.IconURL = actorDisplay(actor)
 	page.Summary = actor.Summary
-	page.Statuses, page.StatusCount = remoteRecentStatuses(ctx, actor)
+	page.Statuses, page.StatusCount = remoteRecentStatuses(ctx, primary, actor)
 
-	switch followStateOf(ctx, actor.ID) {
+	switch followStateOf(ctx, primary, actor.ID) {
 	case datastore.FollowStateAccepted:
 		page.Following = true
 	case datastore.FollowStatePending:
@@ -92,8 +94,8 @@ func remoteProfileHandler(w http.ResponseWriter, r *http.Request) httperror.Http
 
 // followStateOf は自分から見た actorURI へのフォロー状態を返す。
 // フォローしていなければ空文字。
-func followStateOf(ctx context.Context, actorURI string) string {
-	item, err := client.GetKV(ctx, datastore.KVFollowing, actorURI)
+func followStateOf(ctx context.Context, primary *config.ActorConfig, actorURI string) string {
+	item, err := client.GetKV(ctx, actorScoped(primary, datastore.KVFollowing), actorURI)
 	if err != nil {
 		return ""
 	}
@@ -103,11 +105,11 @@ func followStateOf(ctx context.Context, actorURI string) string {
 // remoteRecentStatuses は outbox の先頭ページから投稿を取り出す。
 // 取れなくてもプロフィール自体は出したいので、ここでの失敗は
 // 空の一覧に落とすだけで致命的にはしない。
-func remoteRecentStatuses(ctx context.Context, actor *activitystream.Object) ([]remoteStatusItem, int) {
+func remoteRecentStatuses(ctx context.Context, requester *config.ActorConfig, actor *activitystream.Object) ([]remoteStatusItem, int) {
 	if actor.Outbox == "" {
 		return nil, 0
 	}
-	outbox, err := fetchObject(ctx, actor.Outbox)
+	outbox, err := fetchObject(ctx, requester, actor.Outbox)
 	if err != nil {
 		logf("fetching the outbox of %v failed: %v", actor.ID, err)
 		return nil, 0
@@ -119,7 +121,7 @@ func remoteRecentStatuses(ctx context.Context, actor *activitystream.Object) ([]
 	if outbox.First == "" {
 		return nil, total
 	}
-	first, err := fetchObject(ctx, outbox.First)
+	first, err := fetchObject(ctx, requester, outbox.First)
 	if err != nil {
 		logf("fetching the first outbox page of %v failed: %v", actor.ID, err)
 		return nil, total

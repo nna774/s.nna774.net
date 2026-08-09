@@ -43,9 +43,12 @@ var kvTableName = os.Getenv("DYNAMODB_KV_TABLE_NAME")
 var dynamodbEndpoint = os.Getenv("DYNAMODB_ENDPOINT")
 
 var Config *config.Config
-var signer *httpsigclient.Signer
 var client datastore.Client
-var authenticator *auth.Authenticator
+
+// signers / authenticators は Actor の localpart をキーにする。Actor ごとに
+// 別の署名鍵・API トークンを持つため、パッケージ全体で1つには出来ない。
+var signers map[string]*httpsigclient.Signer
+var authenticators map[string]*auth.Authenticator
 
 // setup は設定・鍵・データストア・認証を初期化する。
 //
@@ -58,19 +61,26 @@ func setup(ctx context.Context) error {
 	}
 	Config = cnf
 
-	signer, err = httpsigclient.NewSigner(Config.PrivateKey(), Config.PublicKey(), mainKeyURI())
-	if err != nil {
-		return err
+	signers = map[string]*httpsigclient.Signer{}
+	authenticators = map[string]*auth.Authenticator{}
+	for _, a := range Config.Actors {
+		s, err := httpsigclient.NewSigner(a.PrivateKey(), a.PublicKey(), mainKeyURI(a))
+		if err != nil {
+			return fmt.Errorf("actor %v: %w", a.Username, err)
+		}
+		signers[a.LocalPart()] = s
+
+		// Cookie の Secure 属性は HTTPS でないと送られない。localhost での
+		// 開発では外す。セッション鍵は全 Actor で共有する
+		// (ブラウザでのログインは primary actor だけが行うため)。
+		au, err := auth.New(a.APIToken(), Config.SessionSecret(), !config.IsDevelopment())
+		if err != nil {
+			return fmt.Errorf("actor %v: %w", a.Username, err)
+		}
+		authenticators[a.LocalPart()] = au
 	}
 
 	client, err = datastore.NewClient(ctx, region, tableName, kvTableName, dynamodbEndpoint)
-	if err != nil {
-		return err
-	}
-
-	// Cookie の Secure 属性は HTTPS でないと送られない。localhost での
-	// 開発では外す。
-	authenticator, err = auth.New(Config.APIToken(), Config.SessionSecret(), !config.IsDevelopment())
 	if err != nil {
 		return err
 	}
@@ -82,19 +92,69 @@ const (
 	statusKey = "status"
 )
 
-func inboxURI() string     { return Config.ID() + "/inbox" }
-func outboxURI() string    { return Config.ID() + "/outbox" }
-func followersURI() string { return Config.ID() + "/followers" }
-func followingURI() string { return Config.ID() + "/following" }
-func mainKeyURI() string   { return Config.ID() + "#main-key" }
+// actorScoped は Actor 固有のリソース (outbox / status / followers /
+// following / mylikes / myboosts / likes / announced / myboostbyid) の
+// キーに localpart を前置する。primary actor (nana) も含め全 Actor を
+// 対称に扱う。
+//
+// notification / actorkey / seen / actorinfo / cursor はローカル Actor に
+// 依存しないインスタンス全体の共有リソースなので、これを通さず素の定数を
+// そのまま使う。
+func actorScoped(actor *config.ActorConfig, name string) string {
+	return actor.LocalPart() + ":" + name
+}
 
-func myStatusURI(id int) string { return fmt.Sprintf("%s/status/%d", Config.ID(), id) }
+func inboxURI(actor *config.ActorConfig) string     { return actor.ID() + "/inbox" }
+func outboxURI(actor *config.ActorConfig) string    { return actor.ID() + "/outbox" }
+func followersURI(actor *config.ActorConfig) string { return actor.ID() + "/followers" }
+func followingURI(actor *config.ActorConfig) string { return actor.ID() + "/following" }
+func mainKeyURI(actor *config.ActorConfig) string   { return actor.ID() + "#" + Config.PublicKeyName }
+
+func myStatusURI(actor *config.ActorConfig, id int) string {
+	return fmt.Sprintf("%s/status/%d", actor.ID(), id)
+}
 
 // newActivityID は自分が送る Activity の id を作る。リモートは id で
 // 重複を排除するため一意でなければならない。秒精度だと同一秒内の
 // Accept が衝突するのでナノ秒を使う。
 func newActivityID(kind string) string {
 	return fmt.Sprintf("%s/%s/%d", Config.Origin, kind, time.Now().UnixNano())
+}
+
+// resolveActor は URL の :user を Actor の設定に解決する。
+func resolveActor(r *http.Request) (*config.ActorConfig, httperror.HttpError) {
+	localPart := httprouter.ParamsFromContext(r.Context()).ByName("user")
+	actor, ok := Config.ActorByLocalPart(localPart)
+	if !ok {
+		return nil, httperror.StatusNotFound(fmt.Sprintf("no such actor %q", localPart), nil)
+	}
+	return actor, nil
+}
+
+// resolvePrimaryActor は :user が primary actor を指しているときだけ成功
+// する。フォロー管理・いいね・ブーストなど primary actor 専用の機能で使う。
+// sub actor (bot 等) はこれらの機能を持たない。
+func resolvePrimaryActor(r *http.Request) (*config.ActorConfig, httperror.HttpError) {
+	actor, herr := resolveActor(r)
+	if herr != nil {
+		return nil, herr
+	}
+	if !actor.Primary {
+		return nil, httperror.StatusNotFound("not available for this actor", nil)
+	}
+	return actor, nil
+}
+
+func signerFor(actor *config.ActorConfig) *httpsigclient.Signer {
+	return signers[actor.LocalPart()]
+}
+
+func authenticatorFor(actor *config.ActorConfig) *auth.Authenticator {
+	return authenticators[actor.LocalPart()]
+}
+
+func primaryAuthenticator() *auth.Authenticator {
+	return authenticatorFor(Config.PrimaryActor())
 }
 
 func respondAsJSON(w http.ResponseWriter, status int, body interface{}) httperror.HttpError {
@@ -122,6 +182,17 @@ func respondText(w http.ResponseWriter, status int, msg string) {
 	w.Write([]byte(msg))
 }
 
+// findActorForWebfinger は resource (acct:user@host か actor の URI) に
+// 一致する Actor を探す。
+func findActorForWebfinger(res string) *config.ActorConfig {
+	for _, a := range Config.Actors {
+		if res == a.Username || res == a.ID() || slices.Contains(a.AliasUsernames, res) {
+			return a
+		}
+	}
+	return nil
+}
+
 func webfingerHandler(w http.ResponseWriter, r *http.Request) httperror.HttpError {
 	param := r.URL.Query()
 	if param == nil {
@@ -134,35 +205,38 @@ func webfingerHandler(w http.ResponseWriter, r *http.Request) httperror.HttpErro
 	}
 	res := strings.TrimPrefix(resource[0], "acct:")
 	// actor の URI 自体で引かれることもある。
-	if !(res == Config.Username || res == Config.ID() || slices.Contains(Config.AliasUsernames, res)) {
+	actor := findActorForWebfinger(res)
+	if actor == nil {
 		return httperror.StatusNotFound(fmt.Sprintf("resource %v not found", resource[0]), nil)
 	}
 	// subject には常に正規のハンドルを返す。旧ハンドルで引かれた場合も
 	// これで正規の方へ誘導される。
-	resp := webfinger.NewWebFingerUserResource(Config.Username, Config.ID(), Config.Origin)
+	resp := webfinger.NewWebFingerUserResource(actor.Username, actor.ID(), Config.Origin)
 	// JRD の Content-Type は application/jrd+json である。
 	w.Header().Set("Content-Type", "application/jrd+json; charset=utf-8")
 	return respondJSONWithoutActivityType(w, http.StatusOK, resp)
 }
 
 // profileFields は config の fields を actor の attachment に直す。
-func profileFields() activitystream.Objects {
-	if len(Config.Fields) == 0 {
+func profileFields(actor *config.ActorConfig) activitystream.Objects {
+	if len(actor.Fields) == 0 {
 		return nil
 	}
-	fields := make(activitystream.Objects, 0, len(Config.Fields))
-	for _, f := range Config.Fields {
+	fields := make(activitystream.Objects, 0, len(actor.Fields))
+	for _, f := range actor.Fields {
 		fields = append(fields, activitystream.NewPropertyValue(f.Name, f.Value))
 	}
 	return fields
 }
 
-func jsonUserHander(w http.ResponseWriter, r *http.Request) httperror.HttpError {
+func jsonUserHander(w http.ResponseWriter, r *http.Request, actor *config.ActorConfig) httperror.HttpError {
 	resp := activitystream.NewUserResource(
-		Config.ID(), Config.Name, Config.IconURI, Config.IconMediaType(), Config.LocalPart(), inboxURI(), outboxURI(), followersURI(), followingURI(), Config.Summary, mainKeyURI(), Config.PublicKey(), profileFields())
+		actor.ID(), actor.ActorType, actor.Name, actor.IconURI, actor.IconMediaType(), actor.LocalPart(),
+		inboxURI(actor), outboxURI(actor), followersURI(actor), followingURI(actor), actor.Summary,
+		mainKeyURI(actor), actor.PublicKey(), profileFields(actor))
 	// followers / following と同じく、中身を出すかは favoritesHandler 側で
 	// HideCollections を見て判断する。URI 自体は常に広告してよい。
-	resp.Liked = favoritesURI()
+	resp.Liked = favoritesURI(actor)
 	return respondAsJSON(w, http.StatusOK, resp)
 }
 
@@ -183,23 +257,31 @@ func wantsActivityJSON(r *http.Request) bool {
 }
 
 func userHandler(w http.ResponseWriter, r *http.Request) httperror.HttpError {
+	actor, herr := resolveActor(r)
+	if herr != nil {
+		return herr
+	}
 	// 同じ URI が Accept によって JSON と HTML を返すので、キャッシュに
 	// 混ざらないよう Vary を付ける。
 	w.Header().Set("Vary", "Accept")
 	if wantsActivityJSON(r) {
-		return jsonUserHander(w, r)
+		return jsonUserHander(w, r, actor)
 	}
-	return htmlUserHandler(w, r)
+	return htmlUserHandler(w, r, actor)
 }
 
 func outboxHandler(w http.ResponseWriter, r *http.Request) httperror.HttpError {
-	itemsCnt, err := client.Top(r.Context(), outboxKey)
+	actor, herr := resolveActor(r)
+	if herr != nil {
+		return herr
+	}
+	itemsCnt, err := client.Top(r.Context(), actorScoped(actor, outboxKey))
 	if err != nil && !errors.Is(err, datastore.ErrNotFound) { // ErrNotFound の時は1つもitemが無い。
 		return httperror.StatusInternalServerError("cannot fetch from datastore", err)
 	}
 	// first は最新から始まるページ、last は最古から始まるページ。
-	outbox := activitystream.NewOrderedCollection(outboxURI(), itemsCnt,
-		outboxURI()+"/page", outboxURI()+"/page?since_id=0")
+	outbox := activitystream.NewOrderedCollection(outboxURI(actor), itemsCnt,
+		outboxURI(actor)+"/page", outboxURI(actor)+"/page?since_id=0")
 	return respondAsJSON(w, http.StatusOK, outbox)
 }
 
@@ -242,6 +324,10 @@ func absoluteURI(r *http.Request) string {
 
 func outboxPageHandler(w http.ResponseWriter, r *http.Request) httperror.HttpError {
 	ctx := r.Context()
+	actor, herr := resolveActor(r)
+	if herr != nil {
+		return herr
+	}
 
 	// since_id は「これより新しいものを古い順に」、until_id は「これより
 	// 古いものを新しい順に」。どちらも無ければ最新から新しい順に返す。
@@ -266,7 +352,7 @@ func outboxPageHandler(w http.ResponseWriter, r *http.Request) httperror.HttpErr
 		base, order = untilID-1, datastore.Desc
 	}
 
-	items, err := client.TakeObject(ctx, outboxKey, base, outboxPerPage, order)
+	items, err := client.TakeObject(ctx, actorScoped(actor, outboxKey), base, outboxPerPage, order)
 	if err != nil {
 		return httperror.StatusInternalServerError("cannot read the outbox", err)
 	}
@@ -278,7 +364,7 @@ func outboxPageHandler(w http.ResponseWriter, r *http.Request) httperror.HttpErr
 	}
 
 	page := activitystream.NewOrderedCollectionPage(
-		absoluteURI(r), outboxURI(), "", "", items)
+		absoluteURI(r), outboxURI(actor), "", "", items)
 
 	// next はより古い方へ、prev はより新しい方へ。端では省く。
 	if len(items) > 0 {
@@ -291,9 +377,9 @@ func outboxPageHandler(w http.ResponseWriter, r *http.Request) httperror.HttpErr
 			return herr
 		}
 		if len(items) == outboxPerPage {
-			page.Next = fmt.Sprintf("%s/page?until_id=%d", outboxURI(), oldest)
+			page.Next = fmt.Sprintf("%s/page?until_id=%d", outboxURI(actor), oldest)
 		}
-		page.Prev = fmt.Sprintf("%s/page?since_id=%d", outboxURI(), newest)
+		page.Prev = fmt.Sprintf("%s/page?since_id=%d", outboxURI(actor), newest)
 	}
 	return respondAsJSON(w, http.StatusOK, page)
 }
@@ -317,13 +403,36 @@ func statusIDFromURI(uri string) (int, httperror.HttpError) {
 	return n, nil
 }
 
+// actorAndIDFromStatusURI は自分の投稿の URI (<actor.ID()>/status/<id>) から
+// 所有する Actor と連番を取り出す。ローカルのどの Actor の投稿でもなければ
+// ok は false。
+func actorAndIDFromStatusURI(uri string) (actor *config.ActorConfig, id int, ok bool) {
+	for _, a := range Config.Actors {
+		prefix := a.ID() + "/status/"
+		rest, found := strings.CutPrefix(uri, prefix)
+		if !found {
+			continue
+		}
+		n, err := strconv.Atoi(rest)
+		if err != nil {
+			return nil, 0, false
+		}
+		return a, n, true
+	}
+	return nil, 0, false
+}
+
 func statusHandler(w http.ResponseWriter, r *http.Request) httperror.HttpError {
 	w.Header().Set("Vary", "Accept")
+	actor, herr := resolveActor(r)
+	if herr != nil {
+		return herr
+	}
 	id, herr := statusIDFromRequest(r)
 	if herr != nil {
 		return herr
 	}
-	status, err := client.GetObject(r.Context(), statusKey, id)
+	status, err := client.GetObject(r.Context(), actorScoped(actor, statusKey), id)
 	if err != nil {
 		if errors.Is(err, datastore.ErrNotFound) {
 			return httperror.StatusNotFound("no such status", err)
@@ -331,7 +440,7 @@ func statusHandler(w http.ResponseWriter, r *http.Request) httperror.HttpError {
 		return httperror.StatusInternalServerError("cannot load the status", err)
 	}
 	if !wantsActivityJSON(r) {
-		return htmlStatusHandler(w, r, id, status)
+		return htmlStatusHandler(w, r, actor, id, status)
 	}
 	return respondAsJSON(w, http.StatusOK, status)
 }
@@ -340,7 +449,7 @@ func indexHandler(w http.ResponseWriter, r *http.Request) httperror.HttpError {
 	if r.URL.Path != "/" {
 		return httperror.StatusNotFound("", nil)
 	}
-	http.Redirect(w, r, "/u/nana", http.StatusMovedPermanently)
+	http.Redirect(w, r, "/u/"+Config.PrimaryActor().LocalPart(), http.StatusMovedPermanently)
 	return nil
 }
 
@@ -349,15 +458,15 @@ func noteToCreate(note *activitystream.Object) *activitystream.Object {
 	return activitystream.NewCreate(createID, note.AttributedTo.ID(), note.To, note.Cc, note)
 }
 
-func saveStatus(ctx context.Context, id int, noteLike *activitystream.Object) error {
-	return client.Put(ctx, statusKey, id, noteLike)
+func saveStatus(ctx context.Context, actor *config.ActorConfig, id int, noteLike *activitystream.Object) error {
+	return client.Put(ctx, actorScoped(actor, statusKey), id, noteLike)
 }
 
-func saveToOutbox(ctx context.Context, id int, create *activitystream.Object) error {
-	if err := client.Put(ctx, outboxKey, id, create); err != nil {
+func saveToOutbox(ctx context.Context, actor *config.ActorConfig, id int, create *activitystream.Object) error {
+	if err := client.Put(ctx, actorScoped(actor, outboxKey), id, create); err != nil {
 		return err
 	}
-	_, err := client.Inc(ctx, outboxKey)
+	_, err := client.Inc(ctx, actorScoped(actor, outboxKey))
 	return err
 }
 
@@ -409,8 +518,8 @@ func newRouter() *httprouter.Router {
 	// 引けるようにする。/u/:user 配下ではない (newActivityID がそう
 	// 発行しているため)。
 	pub(r, http.MethodGet, "/announce/:id", announceStatusHandler)
-	pub(r, http.MethodGet, "/u/:user/followers", collectionHandler(datastore.KVFollowers, followersURI, "フォロワー"))
-	pub(r, http.MethodGet, "/u/:user/following", collectionHandler(datastore.KVFollowing, followingURI, "フォロー中"))
+	pub(r, http.MethodGet, "/u/:user/followers", collectionHandler(datastore.KVFollowers, "フォロワー"))
+	pub(r, http.MethodGet, "/u/:user/following", collectionHandler(datastore.KVFollowing, "フォロー中"))
 	pub(r, http.MethodGet, "/u/:user/favorites", favoritesHandler)
 
 	pub(r, http.MethodGet, "/.well-known/webfinger", webfingerHandler)
@@ -429,6 +538,9 @@ func newRouter() *httprouter.Router {
 	// 他インスタンスのリモートフォローボタンから辿られる。webfinger の
 	// subscribe テンプレートで広告しているので実装が無いと 404 になる。
 	priv(r, http.MethodGet, "/authorize_interaction", false, authorizeInteractionHandler)
+	// 投稿の作成・削除は全 Actor (primary / sub actor 問わず) が持つ。
+	// bot のような sub actor はこの2つだけが私用エンドポイントで、
+	// following / likes / boosts は primary actor 専用。
 	priv(r, http.MethodPost, "/u/:user/statuses", true, postStatusHandler)
 	// HTML の form は DELETE を送れないので、フォーム用に POST 版も用意する。
 	priv(r, http.MethodPost, "/u/:user/statuses/:id/delete", true, deleteStatusHandler)
