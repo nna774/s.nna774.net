@@ -11,6 +11,10 @@ KV_TABLE_NAME := s-nna774-net-kv
 
 # ローカル開発用の資格情報。本番では SSM から読む。
 DEV_API_TOKEN := dev-token
+# bot (sub actor) 用のトークン。config.ActorConfig.devAPITokenEnvName の
+# 命名規則 (primary は API_TOKEN のまま、それ以外は "<LOCALPART>_API_TOKEN")
+# に対応する。actor を増やしたらここにも足す。
+DEV_BOT_API_TOKEN := dev-bot-token
 DEV_SESSION_SECRET := dev-session-secret
 # Gyazo は外部サービスなのでダミー値では動かない。画像投稿を試すときだけ
 # `make dev DEV_GYAZO_ACCESS_TOKEN=xxx` のように渡す。
@@ -40,7 +44,7 @@ dev: app
 	DYNAMODB_TABLE_NAME=$(TABLE_NAME) \
 	DYNAMODB_KV_TABLE_NAME=$(KV_TABLE_NAME) \
 	DYNAMODB_ENDPOINT=$(DYNAMODB_LOCAL_ENDPOINT) \
-	API_TOKEN=$(DEV_API_TOKEN) SESSION_SECRET=$(DEV_SESSION_SECRET) \
+	API_TOKEN=$(DEV_API_TOKEN) BOT_API_TOKEN=$(DEV_BOT_API_TOKEN) SESSION_SECRET=$(DEV_SESSION_SECRET) \
 	GYAZO_ACCESS_TOKEN=$(DEV_GYAZO_ACCESS_TOKEN) \
 	AWS_ACCESS_KEY_ID=dummy AWS_SECRET_ACCESS_KEY=dummy AWS_REGION=$(REGION) \
 	./$(OUT)
@@ -71,8 +75,19 @@ clean:
 	rm -rf $(BUILD_DIR)
 .PHONY: clean
 
+# ACTOR で対象の Actor を切り替える (例: make keys ACTOR=bot)。
+# nana (primary actor) は既存のデプロイ済み鍵と揃えるため、無プレフィックス
+# の名前のまま (private.key / /s.nna774.net/private-key)。sub actor は
+# config.yml の private_key_file / private_key_parameter と同じ命名規則
+# ("<actor>-private.key" / "/s.nna774.net/<actor>-private-key") にする。
+ACTOR ?= nana
+ifeq ($(ACTOR),nana)
 PRIVATE_KEY := private.key
 SSM_PRIVATE_KEY_PARAM := /s.nna774.net/private-key
+else
+PRIVATE_KEY := $(ACTOR)-private.key
+SSM_PRIVATE_KEY_PARAM := /s.nna774.net/$(ACTOR)-private-key
+endif
 
 # 公開鍵はアプリが秘密鍵から導出するので、ファイルとしては持たない。
 keys:
