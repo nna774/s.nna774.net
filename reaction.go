@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/nna774/s.nna774.net/activitystream"
+	"github.com/nna774/s.nna774.net/config"
 	"github.com/nna774/s.nna774.net/datastore"
 	"github.com/nna774/s.nna774.net/httperror"
 )
@@ -51,14 +52,19 @@ func objectFromQuery(r *http.Request) (string, httperror.HttpError) {
 }
 
 // likeRequestHandler は他人の投稿にいいねする。著者の inbox に直接届ける。
+// primary actor 専用 (sub actor は following/likes/boosts を持たない)。
 func likeRequestHandler(w http.ResponseWriter, r *http.Request) httperror.HttpError {
 	ctx := r.Context()
+	primary, herr := resolvePrimaryActor(r)
+	if herr != nil {
+		return herr
+	}
 	object, actorURI, herr := parseReactionRequest(r)
 	if herr != nil {
 		return herr
 	}
 
-	actor, err := fetchActor(ctx, actorURI)
+	actor, err := fetchActor(ctx, primary, actorURI)
 	if err != nil {
 		return httperror.StatusUnprocessableEntity("cannot fetch that actor", err)
 	}
@@ -67,7 +73,7 @@ func likeRequestHandler(w http.ResponseWriter, r *http.Request) httperror.HttpEr
 		return httperror.StatusUnprocessableEntity("actor advertises no inbox", nil)
 	}
 
-	like := activitystream.NewLike(newActivityID("like"), Config.ID(), object)
+	like := activitystream.NewLike(newActivityID("like"), primary.ID(), object)
 	// 表示名とアイコンも一緒に控える。/u/:user/favorites の一覧描画のたびに
 	// 著者をリモートへ取りに行かずに済ませるため。
 	name, iconURL := actorDisplay(actor)
@@ -75,7 +81,7 @@ func likeRequestHandler(w http.ResponseWriter, r *http.Request) httperror.HttpEr
 	// しても /u/:user/favorites に何も出せなくなるのを避けるため。引けなく
 	// てもいいね自体は失敗させない。
 	var content string
-	if note, err := fetchVerifiedNote(ctx, object); err == nil {
+	if note, err := fetchVerifiedNote(ctx, primary, object); err == nil {
 		content = note.Content
 	} else {
 		logf("cannot snapshot content of %v for favorites: %v", object, err)
@@ -83,7 +89,7 @@ func likeRequestHandler(w http.ResponseWriter, r *http.Request) httperror.HttpEr
 	// 配信より先に記録する。逆順だと、配信された Like を取り消す手段が
 	// 無くなる。
 	if err := client.PutKV(ctx, &datastore.KVItem{
-		PK:          datastore.KVMyLikes,
+		PK:          actorScoped(primary, datastore.KVMyLikes),
 		SK:          object,
 		ActivityID:  like.ID,
 		Inbox:       inbox,
@@ -95,21 +101,26 @@ func likeRequestHandler(w http.ResponseWriter, r *http.Request) httperror.HttpEr
 	}); err != nil {
 		return httperror.StatusInternalServerError("cannot record the like", err)
 	}
-	if err := sendToInbox(ctx, inbox, like); err != nil {
+	if err := sendToInbox(ctx, primary, inbox, like); err != nil {
 		return httperror.StatusInternalServerError("cannot deliver the Like", err)
 	}
 	return respondAsJSON(w, http.StatusAccepted, like)
 }
 
-// unlikeRequestHandler は Undo(Like) を送っていいねを取り消す。
+// unlikeRequestHandler は Undo(Like) を送っていいねを取り消す。primary
+// actor 専用。
 func unlikeRequestHandler(w http.ResponseWriter, r *http.Request) httperror.HttpError {
 	ctx := r.Context()
+	primary, herr := resolvePrimaryActor(r)
+	if herr != nil {
+		return herr
+	}
 	object, herr := objectFromQuery(r)
 	if herr != nil {
 		return herr
 	}
 
-	item, err := client.GetKV(ctx, datastore.KVMyLikes, object)
+	item, err := client.GetKV(ctx, actorScoped(primary, datastore.KVMyLikes), object)
 	if err != nil {
 		if errors.Is(err, datastore.ErrNotFound) {
 			return httperror.StatusNotFound("not liked", err)
@@ -117,14 +128,14 @@ func unlikeRequestHandler(w http.ResponseWriter, r *http.Request) httperror.Http
 		return httperror.StatusInternalServerError("cannot look up the like", err)
 	}
 
-	like := activitystream.NewLike(item.ActivityID, Config.ID(), object)
-	undo := activitystream.NewUndo(like, Config.ID(), newActivityID("undo"))
+	like := activitystream.NewLike(item.ActivityID, primary.ID(), object)
+	undo := activitystream.NewUndo(like, primary.ID(), newActivityID("undo"))
 	if item.Inbox != "" {
-		if err := sendToInbox(ctx, item.Inbox, undo); err != nil {
+		if err := sendToInbox(ctx, primary, item.Inbox, undo); err != nil {
 			logf("Undo(Like) to %v failed: %v", item.Inbox, err)
 		}
 	}
-	if err := client.DeleteKV(ctx, datastore.KVMyLikes, object); err != nil {
+	if err := client.DeleteKV(ctx, actorScoped(primary, datastore.KVMyLikes), object); err != nil {
 		return httperror.StatusInternalServerError("cannot remove the like", err)
 	}
 	return respondAsJSON(w, http.StatusOK, undo)
@@ -134,22 +145,27 @@ func unlikeRequestHandler(w http.ResponseWriter, r *http.Request) httperror.Http
 // 同時に自分のタイムラインにも積む。表示は inbox.go の announceHandler が
 // 受信したブーストを表示するのと同じ仕組み (timelineItem の BoostedBy*) を
 // 使うため、埋め込む Note は受信時と同じ検証を経て取得する。
+// boostRequestHandler は primary actor 専用。
 func boostRequestHandler(w http.ResponseWriter, r *http.Request) httperror.HttpError {
 	ctx := r.Context()
+	primary, herr := resolvePrimaryActor(r)
+	if herr != nil {
+		return herr
+	}
 	object, actorURI, herr := parseReactionRequest(r)
 	if herr != nil {
 		return herr
 	}
 
-	note, err := fetchVerifiedNote(ctx, object)
+	note, err := fetchVerifiedNote(ctx, primary, object)
 	if err != nil {
 		return httperror.StatusUnprocessableEntity("cannot fetch that status", err)
 	}
-	cacheActorInfo(ctx, note.AttributedTo.ID())
+	cacheActorInfo(ctx, primary, note.AttributedTo.ID())
 
 	announce := activitystream.NewAnnounce(
-		newActivityID("announce"), Config.ID(), object,
-		[]string{activitystream.ToPublic}, []string{followersURI(), actorURI})
+		newActivityID("announce"), primary.ID(), object,
+		[]string{activitystream.ToPublic}, []string{followersURI(primary), actorURI})
 	announce.Object = activitystream.ObjectRef(note)
 	// timelineHandler はブーストの並び順にこの時刻を使う。空だと「解釈できない
 	// published」として末尾に落ち、ブーストしたのに一番上に出てこなくなる。
@@ -162,7 +178,7 @@ func boostRequestHandler(w http.ResponseWriter, r *http.Request) httperror.HttpE
 		return httperror.StatusInternalServerError("cannot save the boost", err)
 	}
 	if err := client.PutKV(ctx, &datastore.KVItem{
-		PK:          datastore.KVMyBoosts,
+		PK:          actorScoped(primary, datastore.KVMyBoosts),
 		SK:          object,
 		ActivityID:  announce.ID,
 		TargetActor: actorURI,
@@ -175,42 +191,46 @@ func boostRequestHandler(w http.ResponseWriter, r *http.Request) httperror.HttpE
 	// 逆引き。KVMyBoosts は対象投稿の URI がキーなので、これが無いと
 	// Announce 自身の URI からは引けない。
 	if err := client.PutKV(ctx, &datastore.KVItem{
-		PK:         datastore.KVMyBoostByID,
+		PK:         actorScoped(primary, datastore.KVMyBoostByID),
 		SK:         announce.ID,
 		TimelineID: timelineID,
 	}); err != nil {
 		return httperror.StatusInternalServerError("cannot record the boost", err)
 	}
 
-	inboxes, err := followerInboxes(ctx)
+	inboxes, err := followerInboxes(ctx, primary)
 	if err != nil {
 		return httperror.StatusInternalServerError("cannot list follower inboxes", err)
 	}
 	// 著者はフォロワーでないことが多いが、ブーストされたことは知らせる必要が
 	// ある。postStatusHandler の mention 配信と同じ理由。
-	if a, err := fetchActor(ctx, actorURI); err == nil {
+	if a, err := fetchActor(ctx, primary, actorURI); err == nil {
 		if inbox := a.InboxURI(); inbox != "" {
 			inboxes = appendUnique(inboxes, inbox)
 		}
 	} else {
 		logf("cannot fetch the author %v of the boosted status: %v", actorURI, err)
 	}
-	if err := deliver(ctx, inboxes, announce); err != nil {
+	if err := deliver(ctx, primary, inboxes, announce); err != nil {
 		logf("boost %v had delivery failures: %v", announce.ID, err)
 	}
 	return respondAsJSON(w, http.StatusAccepted, announce)
 }
 
 // unboostRequestHandler は Undo(Announce) を送ってブーストを取り消し、
-// 自分のタイムラインからも外す。
+// 自分のタイムラインからも外す。primary actor 専用。
 func unboostRequestHandler(w http.ResponseWriter, r *http.Request) httperror.HttpError {
 	ctx := r.Context()
+	primary, herr := resolvePrimaryActor(r)
+	if herr != nil {
+		return herr
+	}
 	object, herr := objectFromQuery(r)
 	if herr != nil {
 		return herr
 	}
 
-	item, err := client.GetKV(ctx, datastore.KVMyBoosts, object)
+	item, err := client.GetKV(ctx, actorScoped(primary, datastore.KVMyBoosts), object)
 	if err != nil {
 		if errors.Is(err, datastore.ErrNotFound) {
 			return httperror.StatusNotFound("not boosted", err)
@@ -218,21 +238,21 @@ func unboostRequestHandler(w http.ResponseWriter, r *http.Request) httperror.Htt
 		return httperror.StatusInternalServerError("cannot look up the boost", err)
 	}
 
-	announce := activitystream.NewAnnounce(item.ActivityID, Config.ID(), object, nil, nil)
-	undo := activitystream.NewUndo(announce, Config.ID(), newActivityID("undo"))
+	announce := activitystream.NewAnnounce(item.ActivityID, primary.ID(), object, nil, nil)
+	undo := activitystream.NewUndo(announce, primary.ID(), newActivityID("undo"))
 
-	inboxes, err := followerInboxes(ctx)
+	inboxes, err := followerInboxes(ctx, primary)
 	if err != nil {
 		logf("cannot list follower inboxes for Undo(Announce): %v", err)
 	}
 	if item.TargetActor != "" {
-		if a, err := fetchActor(ctx, item.TargetActor); err == nil {
+		if a, err := fetchActor(ctx, primary, item.TargetActor); err == nil {
 			if inbox := a.InboxURI(); inbox != "" {
 				inboxes = appendUnique(inboxes, inbox)
 			}
 		}
 	}
-	if err := deliver(ctx, inboxes, undo); err != nil {
+	if err := deliver(ctx, primary, inboxes, undo); err != nil {
 		logf("Undo(Announce) had delivery failures: %v", err)
 	}
 
@@ -242,11 +262,11 @@ func unboostRequestHandler(w http.ResponseWriter, r *http.Request) httperror.Htt
 		}
 	}
 	if item.ActivityID != "" {
-		if err := client.DeleteKV(ctx, datastore.KVMyBoostByID, item.ActivityID); err != nil {
+		if err := client.DeleteKV(ctx, actorScoped(primary, datastore.KVMyBoostByID), item.ActivityID); err != nil {
 			logf("removing the boost id index failed: %v", err)
 		}
 	}
-	if err := client.DeleteKV(ctx, datastore.KVMyBoosts, object); err != nil {
+	if err := client.DeleteKV(ctx, actorScoped(primary, datastore.KVMyBoosts), object); err != nil {
 		return httperror.StatusInternalServerError("cannot remove the boost", err)
 	}
 	return respondAsJSON(w, http.StatusOK, undo)
@@ -279,16 +299,16 @@ func reactorsOf(ctx context.Context, pk, objectURI string) ([]*datastore.KVItem,
 	return result, nil
 }
 
-func loadReactionState(ctx context.Context) reactionState {
+func loadReactionState(ctx context.Context, actor *config.ActorConfig) reactionState {
 	state := reactionState{liked: map[string]bool{}, boosted: map[string]bool{}}
-	if items, err := client.QueryKV(ctx, datastore.KVMyLikes); err != nil {
+	if items, err := client.QueryKV(ctx, actorScoped(actor, datastore.KVMyLikes)); err != nil {
 		logf("loading liked statuses failed: %v", err)
 	} else {
 		for _, it := range items {
 			state.liked[it.SK] = true
 		}
 	}
-	if items, err := client.QueryKV(ctx, datastore.KVMyBoosts); err != nil {
+	if items, err := client.QueryKV(ctx, actorScoped(actor, datastore.KVMyBoosts)); err != nil {
 		logf("loading boosted statuses failed: %v", err)
 	} else {
 		for _, it := range items {

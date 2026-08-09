@@ -10,12 +10,17 @@ import (
 	"time"
 
 	"github.com/nna774/s.nna774.net/activitystream"
+	"github.com/nna774/s.nna774.net/config"
 	"github.com/nna774/s.nna774.net/datastore"
 	"github.com/nna774/s.nna774.net/httperror"
 	"github.com/nna774/s.nna774.net/web"
 )
 
-// pageBase は全ページ共通の表示データ。
+// pageBase は全ページ共通の表示データ。SiteName / Handle 等のサイト全体の
+// 識別情報は常に primary actor (nana) のもの。どのアクターのプロフィール・
+// 投稿ページを見ていてもナビゲーションのブランドは変わらない。ログイン状態も
+// primary actor のセッションを見る (ブラウザでのログインは primary actor
+// だけが行うため)。
 type pageBase struct {
 	Title     string
 	SiteName  string
@@ -34,13 +39,14 @@ type pageBase struct {
 }
 
 func newPageBase(r *http.Request, title string) pageBase {
-	authed, _ := authenticator.Authenticated(r)
+	primary := Config.PrimaryActor()
+	authed, _ := primaryAuthenticator().Authenticated(r)
 	return pageBase{
 		Title:     title,
-		SiteName:  Config.Name,
+		SiteName:  primary.Name,
 		Origin:    Config.Origin,
-		LocalPart: Config.LocalPart(),
-		Handle:    "@" + Config.Username,
+		LocalPart: primary.LocalPart(),
+		Handle:    "@" + primary.Username,
 		Authed:    authed,
 	}
 }
@@ -113,15 +119,17 @@ const profileStatusCount = 20
 // 削除やタイムラインの走査上限 (timelineScanLimit) と同じ妥協である。
 const profileBoostScanLimit = 200
 
-// myRecentBoosts は自分がブーストしたものを新しい順に最大 limit 件返す。
-func myRecentBoosts(ctx context.Context, limit int) ([]*activitystream.Object, error) {
+// myRecentBoosts は actor がブーストしたものを新しい順に最大 limit 件返す。
+// timeline (受信 + ブースト) は primary actor しか持たないので、sub actor に
+// ついて呼ぶと常に空になる (sub actor はブーストしない)。
+func myRecentBoosts(ctx context.Context, actor *config.ActorConfig, limit int) ([]*activitystream.Object, error) {
 	entries, err := client.TakeObject(ctx, timelineKey, datastore.Inf, profileBoostScanLimit, datastore.Desc)
 	if err != nil && !errors.Is(err, datastore.ErrNotFound) {
 		return nil, err
 	}
 	boosts := make([]*activitystream.Object, 0, limit)
 	for _, act := range entries {
-		if act.Type != activitystream.AnnounceType || act.Actor.ID() != Config.ID() {
+		if act.Type != activitystream.AnnounceType || act.Actor.ID() != actor.ID() {
 			continue
 		}
 		boosts = append(boosts, act)
@@ -132,18 +140,18 @@ func myRecentBoosts(ctx context.Context, limit int) ([]*activitystream.Object, e
 	return boosts, nil
 }
 
-func htmlUserHandler(w http.ResponseWriter, r *http.Request) httperror.HttpError {
+func htmlUserHandler(w http.ResponseWriter, r *http.Request, actor *config.ActorConfig) httperror.HttpError {
 	ctx := r.Context()
 
-	total, err := client.Top(ctx, outboxKey)
+	total, err := client.Top(ctx, actorScoped(actor, outboxKey))
 	if err != nil && !errors.Is(err, datastore.ErrNotFound) {
 		return httperror.StatusInternalServerError("cannot count the outbox", err)
 	}
-	creates, err := client.TakeObject(ctx, outboxKey, datastore.Inf, profileStatusCount, datastore.Desc)
+	creates, err := client.TakeObject(ctx, actorScoped(actor, outboxKey), datastore.Inf, profileStatusCount, datastore.Desc)
 	if err != nil {
 		return httperror.StatusInternalServerError("cannot read the outbox", err)
 	}
-	boosts, err := myRecentBoosts(ctx, profileStatusCount)
+	boosts, err := myRecentBoosts(ctx, actor, profileStatusCount)
 	if err != nil {
 		return httperror.StatusInternalServerError("cannot read the boosts", err)
 	}
@@ -192,20 +200,20 @@ func htmlUserHandler(w http.ResponseWriter, r *http.Request) httperror.HttpError
 	}
 
 	page := profilePage{
-		pageBase:        newPageBase(r, Config.Name+" ("+"@"+Config.Username+")"),
-		Name:            Config.Name,
-		Summary:         Config.Summary,
-		IconURL:         Config.IconURI,
+		pageBase:        newPageBase(r, actor.Name+" ("+"@"+actor.Username+")"),
+		Name:            actor.Name,
+		Summary:         actor.Summary,
+		IconURL:         actor.IconURI,
 		StatusCount:     total,
-		HideCollections: Config.HideCollections,
-		Fields:          profileFields(),
+		HideCollections: actor.HideCollections,
+		Fields:          profileFields(actor),
 		Statuses:        items,
 		HasMore:         hasMore,
 	}
-	if !Config.HideCollections {
-		page.FollowerCount = countOrZero(ctx, datastore.KVFollowers)
-		page.FollowingCount = countOrZero(ctx, datastore.KVFollowing)
-		page.FavoriteCount = countOrZero(ctx, datastore.KVMyLikes)
+	if !actor.HideCollections {
+		page.FollowerCount = countOrZero(ctx, actorScoped(actor, datastore.KVFollowers))
+		page.FollowingCount = countOrZero(ctx, actorScoped(actor, datastore.KVFollowing))
+		page.FavoriteCount = countOrZero(ctx, actorScoped(actor, datastore.KVMyLikes))
 	}
 	return renderPage(w, "profile", page)
 }
@@ -279,12 +287,17 @@ func statusesRange(page, perPage int) (take, skip int) {
 	return page*perPage + 1, (page - 1) * perPage
 }
 
-// statusesHandler は自分の投稿とブーストを古い方まで遡れる一覧を出す。
+// statusesHandler は actor の投稿とブーストを古い方まで遡れる一覧を出す。
 // プロフィールは最新 profileStatusCount 件しか出さないので、その先を
 // 見るための入り口。filter クエリパラメータでブースト・添付ファイル付きに
-// 絞り込める。
+// 絞り込める。ブースト・添付ファイルの絞り込みは自分のブースト記録
+// (KVMyBoosts) を使うため、sub actor (ブーストしない) では常に空になる。
 func statusesHandler(w http.ResponseWriter, r *http.Request) httperror.HttpError {
 	ctx := r.Context()
+	actor, herr := resolveActor(r)
+	if herr != nil {
+		return herr
+	}
 
 	pageNum, err := intParam(r, "page", 1)
 	if err != nil {
@@ -313,7 +326,7 @@ func statusesHandler(w http.ResponseWriter, r *http.Request) httperror.HttpError
 		if filter == statusFilterMedia {
 			outboxTake = statusesMediaScanLimit
 		}
-		entries, err := client.TakeEntries(ctx, outboxKey, datastore.Inf, outboxTake, datastore.Desc)
+		entries, err := client.TakeEntries(ctx, actorScoped(actor, outboxKey), datastore.Inf, outboxTake, datastore.Desc)
 		if err != nil && !errors.Is(err, datastore.ErrNotFound) {
 			return httperror.StatusInternalServerError("cannot read the outbox", err)
 		}
@@ -342,7 +355,7 @@ func statusesHandler(w http.ResponseWriter, r *http.Request) httperror.HttpError
 	// KVMyBoosts は自分の現在のブーストだけを持つ (誰かに配ったタイムライン
 	// 全体ではない) ので、outbox のように take で絞らず全件読んでよい。
 	// ページを跨いでも取りこぼしが起きないよう、常に全部を候補にする。
-	if boosts, err := client.QueryKV(ctx, datastore.KVMyBoosts); err != nil {
+	if boosts, err := client.QueryKV(ctx, actorScoped(actor, datastore.KVMyBoosts)); err != nil {
 		logf("loading my boosts for the status list failed: %v", err)
 	} else {
 		for _, b := range boosts {
@@ -385,7 +398,7 @@ func statusesHandler(w http.ResponseWriter, r *http.Request) httperror.HttpError
 	items, hasNext := paginate(items, skip, statusesPerPage)
 
 	page := statusesPage{
-		pageBase: newPageBase(r, Config.Name+" の投稿"),
+		pageBase: newPageBase(r, actor.Name+" の投稿"),
 		Statuses: items,
 		Filter:   filter,
 		Page:     pageNum,
@@ -427,7 +440,7 @@ type collectionPage struct {
 // htmlCollectionHandler はフォロワー / フォロー中を人間向けの一覧にする。
 // 中身は KV に持っている (saveFollower が名前とアイコンを控えている) ので
 // リモートへ取りに行かない。
-func htmlCollectionHandler(w http.ResponseWriter, r *http.Request, items []*datastore.KVItem, heading string) httperror.HttpError {
+func htmlCollectionHandler(w http.ResponseWriter, r *http.Request, actor *config.ActorConfig, items []*datastore.KVItem, heading string) httperror.HttpError {
 	members := make([]collectionMember, 0, len(items))
 	for _, it := range items {
 		members = append(members, collectionMember{
@@ -437,7 +450,7 @@ func htmlCollectionHandler(w http.ResponseWriter, r *http.Request, items []*data
 		})
 	}
 	page := collectionPage{
-		pageBase: newPageBase(r, Config.Name+" — "+heading),
+		pageBase: newPageBase(r, actor.Name+" — "+heading),
 		Heading:  heading,
 		Members:  members,
 	}
@@ -446,7 +459,7 @@ func htmlCollectionHandler(w http.ResponseWriter, r *http.Request, items []*data
 
 // --- いいね一覧 ---------------------------------------------------------
 
-func favoritesURI() string { return Config.ID() + "/favorites" }
+func favoritesURI(actor *config.ActorConfig) string { return actor.ID() + "/favorites" }
 
 type favoriteItem struct {
 	ObjectURI  string
@@ -462,24 +475,29 @@ type favoritesPage struct {
 	Items []favoriteItem
 }
 
-// favoritesHandler は自分がいいねした投稿の一覧。followers / following と
+// favoritesHandler は actor がいいねした投稿の一覧。followers / following と
 // 同じく、ActivityPub の liked コレクションとして JSON でも、人間向けの
-// 一覧としても出す。HideCollections が立っていれば中身を出さない。
+// 一覧としても出す。HideCollections が立っていれば中身を出さない。sub
+// actor はいいねしないため常に空になる。
 func favoritesHandler(w http.ResponseWriter, r *http.Request) httperror.HttpError {
 	ctx := r.Context()
+	actor, herr := resolveActor(r)
+	if herr != nil {
+		return herr
+	}
 	// 同じ URI が Accept によって JSON と HTML を返すので、キャッシュに
 	// 混ざらないよう Vary を付ける。
 	w.Header().Set("Vary", "Accept")
 
-	if Config.HideCollections {
+	if actor.HideCollections {
 		if wantsActivityJSON(r) {
 			return respondAsJSON(w, http.StatusOK,
-				activitystream.NewOrderedCollection(favoritesURI(), 0, "", ""))
+				activitystream.NewOrderedCollection(favoritesURI(actor), 0, "", ""))
 		}
-		return renderPage(w, "favorites", favoritesPage{pageBase: newPageBase(r, Config.Name+" — いいね")})
+		return renderPage(w, "favorites", favoritesPage{pageBase: newPageBase(r, actor.Name+" — いいね")})
 	}
 
-	items, err := client.QueryKV(ctx, datastore.KVMyLikes)
+	items, err := client.QueryKV(ctx, actorScoped(actor, datastore.KVMyLikes))
 	if err != nil {
 		return httperror.StatusInternalServerError("cannot list the favorites", err)
 	}
@@ -492,11 +510,11 @@ func favoritesHandler(w http.ResponseWriter, r *http.Request) httperror.HttpErro
 		for _, it := range items {
 			ids = append(ids, it.SK)
 		}
-		return respondAsJSON(w, http.StatusOK, activitystream.NewOrderedCollectionOfIDs(favoritesURI(), ids))
+		return respondAsJSON(w, http.StatusOK, activitystream.NewOrderedCollectionOfIDs(favoritesURI(actor), ids))
 	}
 
 	page := favoritesPage{
-		pageBase: newPageBase(r, Config.Name+" — いいね"),
+		pageBase: newPageBase(r, actor.Name+" — いいね"),
 		Items:    make([]favoriteItem, 0, len(items)),
 	}
 	for _, it := range items {
@@ -529,12 +547,12 @@ type statusPage struct {
 	AnnounceCount int
 }
 
-func htmlStatusHandler(w http.ResponseWriter, r *http.Request, id int, note *activitystream.Object) httperror.HttpError {
+func htmlStatusHandler(w http.ResponseWriter, r *http.Request, actor *config.ActorConfig, id int, note *activitystream.Object) httperror.HttpError {
 	ctx := r.Context()
 	page := statusPage{
-		pageBase:      newPageBase(r, Config.Name+": "+excerpt(note.Content, 40)),
-		Name:          Config.Name,
-		IconURL:       Config.IconURI,
+		pageBase:      newPageBase(r, actor.Name+": "+excerpt(note.Content, 40)),
+		Name:          actor.Name,
+		IconURL:       actor.IconURI,
 		Content:       note.Content,
 		Attachments:   noteAttachments(note),
 		Published:     note.Published,
@@ -542,8 +560,8 @@ func htmlStatusHandler(w http.ResponseWriter, r *http.Request, id int, note *act
 		InReplyTo:     note.InReplyTo.ID(),
 		Excerpt:       excerpt(note.Content, 140),
 		StatusID:      id,
-		LikeCount:     countReactors(ctx, datastore.KVLikes, note.ID),
-		AnnounceCount: countReactors(ctx, datastore.KVAnnounced, note.ID),
+		LikeCount:     countReactors(ctx, actorScoped(actor, datastore.KVLikes), note.ID),
+		AnnounceCount: countReactors(ctx, actorScoped(actor, datastore.KVAnnounced), note.ID),
 	}
 	return renderPage(w, "status", page)
 }
@@ -579,23 +597,27 @@ type reactorsPage struct {
 	Items     []reactorItem
 }
 
-// statusLikesHandler は自分の投稿に付いたいいねをした人の一覧。
+// statusLikesHandler は actor の投稿に付いたいいねをした人の一覧。
 func statusLikesHandler(w http.ResponseWriter, r *http.Request) httperror.HttpError {
 	return statusReactorsHandler(w, r, datastore.KVLikes, "status_likes", "いいね", false)
 }
 
-// statusAnnouncesHandler は自分の投稿をブーストした人の一覧。
+// statusAnnouncesHandler は actor の投稿をブーストした人の一覧。
 func statusAnnouncesHandler(w http.ResponseWriter, r *http.Request) httperror.HttpError {
 	return statusReactorsHandler(w, r, datastore.KVAnnounced, "status_announces", "RT", true)
 }
 
 func statusReactorsHandler(w http.ResponseWriter, r *http.Request, pk, templateName, heading string, withAnnounceLink bool) httperror.HttpError {
 	ctx := r.Context()
+	actor, herr := resolveActor(r)
+	if herr != nil {
+		return herr
+	}
 	id, herr := statusIDFromRequest(r)
 	if herr != nil {
 		return herr
 	}
-	status, err := client.GetObject(ctx, statusKey, id)
+	status, err := client.GetObject(ctx, actorScoped(actor, statusKey), id)
 	if err != nil {
 		if errors.Is(err, datastore.ErrNotFound) {
 			return httperror.StatusNotFound("no such status", err)
@@ -603,7 +625,7 @@ func statusReactorsHandler(w http.ResponseWriter, r *http.Request, pk, templateN
 		return httperror.StatusInternalServerError("cannot load the status", err)
 	}
 
-	items, err := reactorsOf(ctx, pk, status.ID)
+	items, err := reactorsOf(ctx, actorScoped(actor, pk), status.ID)
 	if err != nil {
 		return httperror.StatusInternalServerError("cannot list the reactors", err)
 	}
@@ -611,7 +633,7 @@ func statusReactorsHandler(w http.ResponseWriter, r *http.Request, pk, templateN
 
 	prefix := status.ID + "#"
 	page := reactorsPage{
-		pageBase:  newPageBase(r, Config.Name+" — "+heading),
+		pageBase:  newPageBase(r, actor.Name+" — "+heading),
 		Heading:   heading,
 		StatusID:  id,
 		ObjectURI: status.ID,
@@ -764,8 +786,11 @@ func publishedTime(s string) time.Time {
 	return time.Time{}
 }
 
+// timelineHandler は primary actor 専用。sub actor (bot 等) は timeline を
+// 持たない。
 func timelineHandler(w http.ResponseWriter, r *http.Request) httperror.HttpError {
 	ctx := r.Context()
+	primary := Config.PrimaryActor()
 
 	pageNum, err := intParam(r, "page", 1)
 	if err != nil {
@@ -786,12 +811,12 @@ func timelineHandler(w http.ResponseWriter, r *http.Request) httperror.HttpError
 	if err != nil && !errors.Is(err, datastore.ErrNotFound) {
 		return httperror.StatusInternalServerError("cannot read the timeline", err)
 	}
-	mine, err := client.TakeObject(ctx, outboxKey, datastore.Inf, take, datastore.Desc)
+	mine, err := client.TakeObject(ctx, actorScoped(primary, outboxKey), datastore.Inf, take, datastore.Desc)
 	if err != nil && !errors.Is(err, datastore.ErrNotFound) {
 		return httperror.StatusInternalServerError("cannot read the outbox", err)
 	}
 
-	reactions := loadReactionState(ctx)
+	reactions := loadReactionState(ctx, primary)
 
 	items := make([]timelineItem, 0, len(received)+len(mine))
 	for _, act := range append(append([]*activitystream.Object{}, received...), mine...) {
@@ -811,7 +836,7 @@ func timelineHandler(w http.ResponseWriter, r *http.Request) httperror.HttpError
 			published = act.Published
 		}
 
-		isMine := actorURI == Config.ID()
+		isMine := actorURI == primary.ID()
 		item := timelineItem{
 			AuthorURI:   actorURI,
 			Content:     note.Content,
@@ -867,10 +892,13 @@ func timelineHandler(w http.ResponseWriter, r *http.Request) httperror.HttpError
 }
 
 // authorName / cachedIconURL は KV に持っている表示名とアイコンを引く。
-// 表示のたびにリモートへ actor を取りに行かないための措置。
+// 表示のたびにリモートへ actor を取りに行かないための措置。timeline や
+// notifications は primary actor 専用のページなので、「自分」は常に
+// primary actor を指す。
 func authorName(ctx context.Context, actorURI string) string {
-	if actorURI == Config.ID() {
-		return Config.Name
+	primary := Config.PrimaryActor()
+	if actorURI == primary.ID() {
+		return primary.Name
 	}
 	if it := lookupKnownActor(ctx, actorURI); it != nil && it.Name != "" {
 		return it.Name
@@ -879,8 +907,9 @@ func authorName(ctx context.Context, actorURI string) string {
 }
 
 func cachedIconURL(ctx context.Context, actorURI string) string {
-	if actorURI == Config.ID() {
-		return Config.IconURI
+	primary := Config.PrimaryActor()
+	if actorURI == primary.ID() {
+		return primary.IconURI
 	}
 	if it := lookupKnownActor(ctx, actorURI); it != nil {
 		return it.IconURL
@@ -889,12 +918,20 @@ func cachedIconURL(ctx context.Context, actorURI string) string {
 }
 
 // lookupKnownActor は表示名を持っている項目を探す。フォロー関係を先に見る
-// のは、そちらが期限切れしないため。actorinfo は TTL で消える。
+// のは、そちらが期限切れしないため。actorinfo は TTL で消える。フォロー
+// 関係は primary actor のものを見る (following / followers を読む画面は
+// primary actor 専用のため)。
 func lookupKnownActor(ctx context.Context, actorURI string) *datastore.KVItem {
 	if actorURI == "" {
 		return nil
 	}
-	for _, partition := range []string{datastore.KVFollowing, datastore.KVFollowers, datastore.KVActorInfo} {
+	primary := Config.PrimaryActor()
+	partitions := []string{
+		actorScoped(primary, datastore.KVFollowing),
+		actorScoped(primary, datastore.KVFollowers),
+		datastore.KVActorInfo,
+	}
+	for _, partition := range partitions {
 		if it, err := client.GetKV(ctx, partition, actorURI); err == nil {
 			return it
 		}
@@ -942,6 +979,10 @@ type notificationsPage struct {
 
 const notificationPageSize = 40
 
+// notificationsHandler は primary actor 専用のページだが、通知そのものは
+// 全 Actor (primary / sub 問わず) 分をまとめて表示する。通知ストリームは
+// ローカル actor に依存しないインスタンス全体の共有リソースなので、bot
+// 宛の Follow もここに混ざって出る。
 func notificationsHandler(w http.ResponseWriter, r *http.Request) httperror.HttpError {
 	ctx := r.Context()
 
@@ -1043,21 +1084,18 @@ func toNotificationItem(ctx context.Context, act *activitystream.Object, excerpt
 	return item, true
 }
 
-// myStatusExcerpt は自分の投稿の URI から本文の抜粋を引く。自分の投稿で
-// なければ空を返す。
+// myStatusExcerpt はローカル actor の投稿の URI から本文の抜粋を引く。
+// ローカルの投稿でなければ空を返す。
 func myStatusExcerpt(ctx context.Context, uri string, cache map[string]string) string {
-	if !isMyStatus(uri) {
+	owner, id, ok := actorAndIDFromStatusURI(uri)
+	if !ok {
 		return ""
 	}
 	if s, ok := cache[uri]; ok {
 		return s
 	}
 	cache[uri] = ""
-	id, herr := statusIDFromURI(uri)
-	if herr != nil {
-		return ""
-	}
-	note, err := client.GetObject(ctx, statusKey, id)
+	note, err := client.GetObject(ctx, actorScoped(owner, statusKey), id)
 	if err != nil {
 		// 既に消した投稿へのいいねが残っていることはある。通知自体は
 		// 出したいので、抜粋だけ諦める。
@@ -1079,7 +1117,7 @@ type loginPage struct {
 }
 
 func getLoginHandler(w http.ResponseWriter, r *http.Request) httperror.HttpError {
-	if ok, _ := authenticator.Authenticated(r); ok {
+	if ok, _ := primaryAuthenticator().Authenticated(r); ok {
 		http.Redirect(w, r, "/timeline", http.StatusSeeOther)
 		return nil
 	}

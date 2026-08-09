@@ -10,6 +10,7 @@ import (
 	"net/http"
 
 	"github.com/nna774/s.nna774.net/activitystream"
+	"github.com/nna774/s.nna774.net/config"
 )
 
 func logf(format string, args ...interface{}) { log.Printf(format, args...) }
@@ -36,13 +37,13 @@ func appendToTimelineWithID(ctx context.Context, in *activitystream.Object) (int
 	return id, nil
 }
 
-// sendToInbox は署名付きで1つの inbox に Activity を送る。
-func sendToInbox(ctx context.Context, to string, object *activitystream.Object) error {
+// sendToInbox は actor の鍵で署名して1つの inbox に Activity を送る。
+func sendToInbox(ctx context.Context, actor *config.ActorConfig, to string, object *activitystream.Object) error {
 	buf := &bytes.Buffer{}
 	if err := json.NewEncoder(buf).Encode(object); err != nil {
 		return err
 	}
-	resp, err := signer.RequestWithSign(ctx, http.MethodPost, to, buf.Bytes())
+	resp, err := signerFor(actor).RequestWithSign(ctx, http.MethodPost, to, buf.Bytes())
 	if err != nil {
 		return fmt.Errorf("post to inbox %v failed: %w", to, err)
 	}
@@ -56,26 +57,26 @@ func sendToInbox(ctx context.Context, to string, object *activitystream.Object) 
 }
 
 // sendToActor は actor を引いてその inbox に送る。
-func sendToActor(ctx context.Context, actorURI string, object *activitystream.Object) error {
-	actor, err := fetchActor(ctx, actorURI)
+func sendToActor(ctx context.Context, actor *config.ActorConfig, actorURI string, object *activitystream.Object) error {
+	remote, err := fetchActor(ctx, actor, actorURI)
 	if err != nil {
 		return err
 	}
-	inbox := actor.InboxURI()
+	inbox := remote.InboxURI()
 	if inbox == "" {
 		return fmt.Errorf("actor %v advertises no inbox", actorURI)
 	}
-	return sendToInbox(ctx, inbox, object)
+	return sendToInbox(ctx, actor, inbox, object)
 }
 
 // sendAccept は受け取った Activity をそのまま object に入れた Accept を返す。
 // inbox が既に分かっている場合は actor の再取得を省ける。
-func sendAccept(ctx context.Context, in *activitystream.Object, inbox string) error {
-	accept := activitystream.NewAccept(in, Config.ID(), newActivityID("accept"))
+func sendAccept(ctx context.Context, actor *config.ActorConfig, in *activitystream.Object, inbox string) error {
+	accept := activitystream.NewAccept(in, actor.ID(), newActivityID("accept"))
 	if inbox != "" {
-		return sendToInbox(ctx, inbox, accept)
+		return sendToInbox(ctx, actor, inbox, accept)
 	}
-	return sendToActor(ctx, in.Actor.ID(), accept)
+	return sendToActor(ctx, actor, in.Actor.ID(), accept)
 }
 
 // DeliveryError は配信の部分的な失敗をまとめる。1つの宛先が落ちても
@@ -92,10 +93,10 @@ func (e *DeliveryError) Error() string {
 //
 // 1人用インスタンスで宛先が少ないため同期配信する。Lambda の 30 秒に
 // 収まらなくなったら、この関数を SQS 経由の非同期配信に差し替える。
-func deliver(ctx context.Context, inboxes []string, object *activitystream.Object) error {
+func deliver(ctx context.Context, actor *config.ActorConfig, inboxes []string, object *activitystream.Object) error {
 	failures := map[string]error{}
 	for _, inbox := range inboxes {
-		if err := sendToInbox(ctx, inbox, object); err != nil {
+		if err := sendToInbox(ctx, actor, inbox, object); err != nil {
 			logf("delivery to %v failed: %v", inbox, err)
 			failures[inbox] = err
 		}

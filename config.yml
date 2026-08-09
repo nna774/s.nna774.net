@@ -1,35 +1,59 @@
-# 正規のハンドル。webfinger の subject に出る。旧ハンドルで引かれても
-# こちらへ誘導される。
-# https://docs.joinmastodon.org/spec/webfinger/#mastodons-requirements-for-webfinger
-username: 'nana@s.nna774.net'
-alias_usernames:
-  # nna774.net は webfinger を s.nna774.net に 302 リダイレクトしている
-  # ため、旧ハンドルでも引ける。
-  - nana@nna774.net
-name: 久我山菜々
+# インスタンス全体の設定。origin はどの Actor でも共有する。
 origin: https://s.nna774.net
-icon_uri: https://nna774.net/img/1012_filtered.jpg
-summary: B95 H108 S102
-# プロフィールに並べる追加情報。Mastodon 系はこれを表として表示する。
-# value が URL のときはリンクになり、リンク先に actor へ戻る rel="me" の
-# リンクがあれば検証済みとして表示される。
-fields:
-  - name: Web
-    value: https://nna774.net/
-# 受け取った Follow を自動で Accept するか。false の場合は pending で
-# 保留し、手動で Accept するまでフォロワーに数えない。
-auto_accept_follow: true
-# followers / following の中身と件数を公開しないか。
-hide_collections: false
 public_key_name: main-key
-# private_key_file は ENV=development のときだけ使う。公開鍵は秘密鍵から
-# 導出するので pub.key は読まない。
-private_key_file: private.key
-private_key_parameter: /s.nna774.net/private-key
-# 私用エンドポイント (投稿・タイムライン・フォロー) の資格情報と、
-# Cookie 署名用の HMAC 鍵。別に持つことで、後者を差し替えるだけで
-# 全セッションを失効させられる。
-api_token_parameter: /s.nna774.net/api-token
+# 私用エンドポイント (timeline・notifications・フォロー等) の Cookie 署名用
+# HMAC 鍵。ブラウザでのログインは primary actor だけが行うため、Actor ごと
+# ではなくインスタンスに1つ。
 session_secret_parameter: /s.nna774.net/session-secret
 # 画像投稿で使う Gyazo API のアクセストークン。空だと画像投稿は使えない。
+# 全 Actor で共有する。
 gyazo_access_token_parameter: /s.nna774.net/gyazo-access-token
+
+# actors はこのインスタンスが持つ Actor の一覧。primary: true を持つものが
+# ちょうど1人必要 (webfinger のデフォルト解決やトップページのリダイレクト先
+# に使う)。primary 以外の sub actor (bot 等) は投稿の作成・削除と Follow の
+# 受理だけを持つ縮小版の機能セット (timeline・notifications・フォロー管理・
+# いいね・ブーストは無い)。詳細は doc/bot-account-design.md 参照。
+actors:
+  # 正規のハンドル。webfinger の subject に出る。旧ハンドルで引かれても
+  # こちらへ誘導される。
+  # https://docs.joinmastodon.org/spec/webfinger/#mastodons-requirements-for-webfinger
+  - username: 'nana@s.nna774.net'
+    primary: true
+    alias_usernames:
+      # nna774.net は webfinger を s.nna774.net に 302 リダイレクトしている
+      # ため、旧ハンドルでも引ける。
+      - nana@nna774.net
+    name: 久我山菜々
+    actor_type: Person
+    icon_uri: https://nna774.net/img/1012_filtered.jpg
+    summary: B95 H108 S102
+    # プロフィールに並べる追加情報。Mastodon 系はこれを表として表示する。
+    # value が URL のときはリンクになり、リンク先に actor へ戻る rel="me" の
+    # リンクがあれば検証済みとして表示される。
+    fields:
+      - name: Web
+        value: https://nna774.net/
+    # 受け取った Follow を自動で Accept するか。false の場合は pending で
+    # 保留し、手動で Accept するまでフォロワーに数えない。
+    auto_accept_follow: true
+    # followers / following の中身と件数を公開しないか。
+    hide_collections: false
+    # private_key_file は ENV=development のときだけ使う。公開鍵は秘密鍵
+    # から導出するので pub.key は読まない。
+    private_key_file: private.key
+    private_key_parameter: /s.nna774.net/private-key
+    api_token_parameter: /s.nna774.net/api-token
+
+  # bot アカウント。curl から投稿するための sub actor。Follow は自動承認し
+  # 独自のフォロワーを持つが、timeline・notifications・フォロー管理・
+  # いいね・ブーストは無い。Like・Announce・返信の受信処理も持たない。
+  - username: 'bot@s.nna774.net'
+    name: bot
+    actor_type: Service
+    summary: nana の bot アカウント。curl から投稿する。
+    auto_accept_follow: true
+    hide_collections: false
+    private_key_file: bot-private.key
+    private_key_parameter: /s.nna774.net/bot-private-key
+    api_token_parameter: /s.nna774.net/bot-api-token

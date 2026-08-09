@@ -3,9 +3,9 @@ package main
 import (
 	"context"
 	"errors"
-	"strings"
 
 	"github.com/nna774/s.nna774.net/activitystream"
+	"github.com/nna774/s.nna774.net/config"
 	"github.com/nna774/s.nna774.net/datastore"
 )
 
@@ -24,9 +24,11 @@ const notificationScanLimit = 500
 // 「99+」相当の扱いでよく、全件数える必要は無い。
 const unreadCountLimit = 100
 
-// isMyStatus は URI が自分の投稿かを返す。
+// isMyStatus は URI がローカルのいずれかの Actor (primary / sub 問わず) の
+// 投稿かを返す。
 func isMyStatus(uri string) bool {
-	return uri != "" && strings.HasPrefix(uri, Config.ID()+"/status/")
+	_, _, ok := actorAndIDFromStatusURI(uri)
+	return ok
 }
 
 // appendNotification は Activity を通知として積む。
@@ -52,10 +54,10 @@ func appendNotification(ctx context.Context, in *activitystream.Object) error {
 // notifyOrLog は通知の保存に失敗しても呼び出し側を失敗させない。通知は
 // 副産物であり、これで inbox が 5xx を返すと相手が本体の Activity ごと
 // リトライしてくる。
-func notifyOrLog(ctx context.Context, in *activitystream.Object) {
+func notifyOrLog(ctx context.Context, actor *config.ActorConfig, in *activitystream.Object) {
 	// 表示名とアイコンを受信時に控える。フォロワーでない相手からの通知は
 	// これが無いと actor の URI がそのまま並ぶ。
-	cacheActorInfo(ctx, in.Actor.ID())
+	cacheActorInfo(ctx, actor, in.Actor.ID())
 	if err := appendNotification(ctx, in); err != nil {
 		logf("recording a %v notification from %v failed: %v", in.Type, in.Actor.ID(), err)
 	}
@@ -89,11 +91,11 @@ func notifiedObject(ctx context.Context, objectURI string) bool {
 // 自分の投稿への返信、to / cc に自分が入っているもの、本文の Mention タグ
 // が自分を指しているものが該当する。フォロー相手同士の会話はタイムライン
 // に流すだけで通知にはしない。
-func notifiesMe(in *activitystream.Object, note *activitystream.Object) bool {
+func notifiesMe(actor *config.ActorConfig, in *activitystream.Object, note *activitystream.Object) bool {
 	if isMyStatus(note.InReplyTo.ID()) {
 		return true
 	}
-	me := Config.ID()
+	me := actor.ID()
 	// 宛先は Activity 側にも Note 側にも書かれる。実装によってどちらに
 	// 入るかが違うので両方見る。
 	for _, addrs := range []activitystream.Strings{in.To, in.Cc, note.To, note.Cc} {

@@ -57,10 +57,17 @@ func nodeInfoIndexHandler(w http.ResponseWriter, r *http.Request) httperror.Http
 }
 
 func nodeInfoHandler(w http.ResponseWriter, r *http.Request) httperror.HttpError {
-	posts, err := client.Top(r.Context(), outboxKey)
-	if err != nil && !errors.Is(err, datastore.ErrNotFound) {
-		logf("counting posts for nodeinfo failed: %v", err)
+	ctx := r.Context()
+	posts := 0
+	for _, a := range Config.Actors {
+		n, err := client.Top(ctx, actorScoped(a, outboxKey))
+		if err != nil && !errors.Is(err, datastore.ErrNotFound) {
+			logf("counting posts of %v for nodeinfo failed: %v", a.Username, err)
+			continue
+		}
+		posts += n
 	}
+	primary := Config.PrimaryActor()
 	// nodeinfo 2.1 の Content-Type は profile 付きが正式。
 	w.Header().Set("Content-Type",
 		`application/json; profile="http://nodeinfo.diaspora.software/ns/schema/2.1#"`)
@@ -71,12 +78,12 @@ func nodeInfoHandler(w http.ResponseWriter, r *http.Request) httperror.HttpError
 		Services:          map[string][]string{"inbound": {}, "outbound": {}},
 		OpenRegistrations: false,
 		Usage: nodeInfoUsage{
-			Users:      nodeInfoUsers{Total: 1},
+			Users:      nodeInfoUsers{Total: len(Config.Actors)},
 			LocalPosts: posts,
 		},
 		Metadata: map[string]interface{}{
-			"nodeName":        Config.Name,
-			"nodeDescription": Config.Summary,
+			"nodeName":        primary.Name,
+			"nodeDescription": primary.Summary,
 		},
 	})
 }

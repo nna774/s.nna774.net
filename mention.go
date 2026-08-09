@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/nna774/s.nna774.net/activitystream"
+	"github.com/nna774/s.nna774.net/config"
 )
 
 // mentionPattern は本文中の @user@host を拾う。
@@ -37,7 +38,7 @@ type mention struct {
 // collectMentions は本文中の @user@host と、明示的に渡された宛先を
 // あわせて actor URI に解決する。解決できなかったものは黙って捨てる。
 // 1つ引けないだけで投稿自体を失敗させる意味は無い。
-func collectMentions(ctx context.Context, content string, explicit []string) []mention {
+func collectMentions(ctx context.Context, actor *config.ActorConfig, content string, explicit []string) []mention {
 	seen := map[string]bool{}
 	out := make([]mention, 0)
 
@@ -69,19 +70,19 @@ func collectMentions(ctx context.Context, content string, explicit []string) []m
 			logf("cannot resolve mention %v: %v", e, err)
 			continue
 		}
-		add(handleFor(ctx, e, uri), uri)
+		add(handleFor(ctx, actor, e, uri), uri)
 	}
 	return out
 }
 
 // handleFor は表示に使う @user@host を決める。入力がハンドルならそれを
 // 使い、URI なら actor から組む。
-func handleFor(ctx context.Context, input, actorURI string) string {
+func handleFor(ctx context.Context, actor *config.ActorConfig, input, actorURI string) string {
 	if strings.Contains(input, "@") && !strings.HasPrefix(input, "http") {
 		s := strings.TrimPrefix(strings.TrimPrefix(input, "acct:"), "@")
 		return "@" + s
 	}
-	return mentionName(ctx, actorURI)
+	return mentionName(ctx, actor, actorURI)
 }
 
 // renderContent は入力の平文を ActivityStreams の content にする。

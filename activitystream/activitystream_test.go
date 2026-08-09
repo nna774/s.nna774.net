@@ -203,7 +203,7 @@ func TestEmptyCollectionKeepsTotalItems(t *testing.T) {
 func TestMarshalDoesNotDropTypeSpecificFields(t *testing.T) {
 	t.Run("Person", func(t *testing.T) {
 		actor := NewUserResource(
-			"https://s.nna774.net/u/nana", "久我山菜々",
+			"https://s.nna774.net/u/nana", PersonType, "久我山菜々",
 			"https://nna774.net/img/a.jpg", "image/jpeg", "nana",
 			"https://s.nna774.net/u/nana/inbox", "https://s.nna774.net/u/nana/outbox",
 			"https://s.nna774.net/u/nana/followers", "https://s.nna774.net/u/nana/following",
@@ -459,7 +459,7 @@ func TestNewPropertyValue(t *testing.T) {
 // attachment は actor の JSON に出ていなければ相手に届かない。
 func TestUserResourceHasAttachment(t *testing.T) {
 	actor := NewUserResource(
-		"https://s.nna774.net/u/nana", "久我山菜々",
+		"https://s.nna774.net/u/nana", PersonType, "久我山菜々",
 		"https://nna774.net/img/a.jpg", "image/jpeg", "nana",
 		"https://s.nna774.net/u/nana/inbox", "https://s.nna774.net/u/nana/outbox",
 		"https://s.nna774.net/u/nana/followers", "https://s.nna774.net/u/nana/following",
@@ -480,7 +480,7 @@ func TestUserResourceHasAttachment(t *testing.T) {
 	}
 	// 項目が無いときに空の attachment を出すと、実装によっては壊れて
 	// 見えるので出さない。
-	bare := NewUserResource("id", "n", "i", "image/jpeg", "n", "in", "out", "fs", "fg", "s", "k", "PEM", nil)
+	bare := NewUserResource("id", PersonType, "n", "i", "image/jpeg", "n", "in", "out", "fs", "fg", "s", "k", "PEM", nil)
 	if _, ok := marshalToMap(t, bare)["attachment"]; ok {
 		t.Error("attachment should be omitted when there is no field")
 	}

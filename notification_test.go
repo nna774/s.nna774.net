@@ -15,9 +15,10 @@ import (
 func withTestConfig(t *testing.T) string {
 	t.Helper()
 	saved := Config
-	Config = &config.Config{Origin: "https://s.example", Username: "nana"}
+	primary := &config.ActorConfig{Username: "nana", Primary: true, ActorType: config.ActorTypePerson, Origin: "https://s.example"}
+	Config = &config.Config{Origin: "https://s.example", Actors: []*config.ActorConfig{primary}}
 	t.Cleanup(func() { Config = saved })
-	return Config.ID()
+	return primary.ID()
 }
 
 func TestIsMyStatus(t *testing.T) {
@@ -184,7 +185,7 @@ func TestNotifiesMe(t *testing.T) {
 		},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
-			if got := notifiesMe(tt.in, tt.note); got != tt.want {
+			if got := notifiesMe(Config.PrimaryActor(), tt.in, tt.note); got != tt.want {
 				t.Errorf("notifiesMe() = %v, want %v", got, tt.want)
 			}
 		})

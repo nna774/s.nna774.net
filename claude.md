@@ -138,10 +138,14 @@ Lambda 実行時の設定。`build/config.yml` にコピーされてデプロイ
 
 | パラメータ | 用途 |
 |---|---|
-| `/s.nna774.net/private-key` | HTTP Signature の署名鍵（RSA 2048） |
-| `/s.nna774.net/api-token` | API トークン |
-| `/s.nna774.net/session-secret` | Cookie 署名鍵 |
-| `/s.nna774.net/gyazo-access-token` | 画像投稿用の Gyazo アクセストークン |
+| `/s.nna774.net/private-key` | nana (primary actor) の HTTP Signature 署名鍵（RSA 2048） |
+| `/s.nna774.net/api-token` | nana (primary actor) の API トークン |
+| `/s.nna774.net/bot-private-key` | bot (sub actor) の HTTP Signature 署名鍵（RSA 2048） |
+| `/s.nna774.net/bot-api-token` | bot (sub actor) の API トークン |
+| `/s.nna774.net/session-secret` | Cookie 署名鍵（全 Actor で共有） |
+| `/s.nna774.net/gyazo-access-token` | 画像投稿用の Gyazo アクセストークン（全 Actor で共有） |
+
+複数 Actor（primary + sub actor）対応の設計は `doc/bot-account-design.md` を参照。
 
 ## DynamoDB テーブル
 

@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/nna774/s.nna774.net/activitystream"
+	"github.com/nna774/s.nna774.net/config"
 	"github.com/nna774/s.nna774.net/datastore"
 	"github.com/nna774/s.nna774.net/httperror"
 )
@@ -52,8 +53,8 @@ func sharedInboxOf(actor *activitystream.Object) string {
 
 // followerInboxes は配信先の一覧を返す。sharedInbox を持つ相手は
 // そこにまとめ、同じ inbox への重複を排除する。
-func followerInboxes(ctx context.Context) ([]string, error) {
-	items, err := client.QueryKV(ctx, datastore.KVFollowers)
+func followerInboxes(ctx context.Context, actor *config.ActorConfig) ([]string, error) {
+	items, err := client.QueryKV(ctx, actorScoped(actor, datastore.KVFollowers))
 	if err != nil {
 		return nil, err
 	}
@@ -81,22 +82,31 @@ func followerInboxes(ctx context.Context) ([]string, error) {
 // クライアントには OrderedCollection の JSON を、ブラウザには誰がいるのか
 // 読める HTML の一覧を出し分ける。中身は出さず件数とページへのリンクだけを
 // 返す実装もあるが、1人用なので items をそのまま並べる。
-func collectionHandler(partition string, uri func() string, heading string) func(http.ResponseWriter, *http.Request) httperror.HttpError {
+//
+// partition は datastore.KVFollowers か datastore.KVFollowing。これは
+// followers / following という URL の末尾とも一致するので、そのまま actor
+// の URI に付け足して uri を組める。
+func collectionHandler(partition string, heading string) func(http.ResponseWriter, *http.Request) httperror.HttpError {
 	return func(w http.ResponseWriter, r *http.Request) httperror.HttpError {
 		ctx := r.Context()
+		actor, herr := resolveActor(r)
+		if herr != nil {
+			return herr
+		}
+		uri := actor.ID() + "/" + partition
 		// 同じ URI が Accept によって JSON と HTML を返すので、キャッシュに
 		// 混ざらないよう Vary を付ける。
 		w.Header().Set("Vary", "Accept")
-		if Config.HideCollections {
+		if actor.HideCollections {
 			// 件数も中身も出さない。連合には totalItems 0 の空コレクション、
 			// ブラウザには空の一覧を返す。
 			if wantsActivityJSON(r) {
 				return respondAsJSON(w, http.StatusOK,
-					activitystream.NewOrderedCollection(uri(), 0, "", ""))
+					activitystream.NewOrderedCollection(uri, 0, "", ""))
 			}
-			return htmlCollectionHandler(w, r, nil, heading)
+			return htmlCollectionHandler(w, r, actor, nil, heading)
 		}
-		items, err := client.QueryKV(ctx, partition)
+		items, err := client.QueryKV(ctx, actorScoped(actor, partition))
 		if err != nil {
 			return httperror.StatusInternalServerError("cannot list the collection", err)
 		}
@@ -108,12 +118,12 @@ func collectionHandler(partition string, uri func() string, heading string) func
 			accepted = append(accepted, it)
 		}
 		if !wantsActivityJSON(r) {
-			return htmlCollectionHandler(w, r, accepted, heading)
+			return htmlCollectionHandler(w, r, actor, accepted, heading)
 		}
 		ids := make([]string, 0, len(accepted))
 		for _, it := range accepted {
 			ids = append(ids, it.SK)
 		}
-		return respondAsJSON(w, http.StatusOK, activitystream.NewOrderedCollectionOfIDs(uri(), ids))
+		return respondAsJSON(w, http.StatusOK, activitystream.NewOrderedCollectionOfIDs(uri, ids))
 	}
 }

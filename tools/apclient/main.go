@@ -28,6 +28,7 @@ func main() {
 		postTo     = flag.String("post", "", "URL to POST a signed activity to")
 		getFrom    = flag.String("get", "", "URL to GET with a signature")
 		bodyFile   = flag.String("body", "", "file containing the activity to POST ('-' for stdin)")
+		actorFlag  = flag.String("actor", "", "localpart of the actor to sign as (default: primary actor)")
 	)
 	flag.Parse()
 
@@ -40,8 +41,16 @@ func main() {
 	if err != nil {
 		log.Fatalf("loading config: %v", err)
 	}
-	keyID := cnf.ID() + "#main-key"
-	signer, err := httpsigclient.NewSigner(cnf.PrivateKey(), cnf.PublicKey(), keyID)
+	actor := cnf.PrimaryActor()
+	if *actorFlag != "" {
+		found, ok := cnf.ActorByLocalPart(*actorFlag)
+		if !ok {
+			log.Fatalf("no such actor %q", *actorFlag)
+		}
+		actor = found
+	}
+	keyID := actor.ID() + "#" + cnf.PublicKeyName
+	signer, err := httpsigclient.NewSigner(actor.PrivateKey(), actor.PublicKey(), keyID)
 	if err != nil {
 		log.Fatalf("creating signer: %v", err)
 	}

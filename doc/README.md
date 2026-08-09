@@ -11,6 +11,7 @@
 - [Development](development.md) - ローカル開発の手順
 - [Deployment](deployment.md) - デプロイ手順
 - [Design Decisions](design-decisions.md) - 設計上の判断と理由
+- [Bot Account Design](bot-account-design.md) - 複数アクター（bot account）対応の設計（未実装）
 
 ## クイックスタート
 

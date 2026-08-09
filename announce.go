@@ -8,6 +8,7 @@ import (
 
 	"github.com/julienschmidt/httprouter"
 	"github.com/nna774/s.nna774.net/activitystream"
+	"github.com/nna774/s.nna774.net/config"
 	"github.com/nna774/s.nna774.net/datastore"
 	"github.com/nna774/s.nna774.net/httperror"
 )
@@ -26,6 +27,7 @@ func announceStatusHandler(w http.ResponseWriter, r *http.Request) httperror.Htt
 	ctx := r.Context()
 	id := httprouter.ParamsFromContext(ctx).ByName("id")
 	announceURI := fmt.Sprintf("%s/announce/%s", Config.Origin, id)
+	primary := Config.PrimaryActor()
 
 	item, err := client.GetKV(ctx, datastore.KVMyBoostByID, announceURI)
 	if err != nil {
@@ -42,7 +44,7 @@ func announceStatusHandler(w http.ResponseWriter, r *http.Request) httperror.Htt
 		return httperror.StatusInternalServerError("cannot load the boost", err)
 	}
 	if !wantsActivityJSON(r) {
-		return htmlAnnounceHandler(w, r, announce)
+		return htmlAnnounceHandler(w, r, primary, announce)
 	}
 	return respondAsJSON(w, http.StatusOK, announce)
 }
@@ -65,7 +67,7 @@ type announcePage struct {
 	Liked       bool
 }
 
-func htmlAnnounceHandler(w http.ResponseWriter, r *http.Request, announce *activitystream.Object) httperror.HttpError {
+func htmlAnnounceHandler(w http.ResponseWriter, r *http.Request, primary *config.ActorConfig, announce *activitystream.Object) httperror.HttpError {
 	note := announce.Object.Item()
 	if note == nil {
 		return httperror.StatusInternalServerError("boosted note is missing", nil)
@@ -73,19 +75,19 @@ func htmlAnnounceHandler(w http.ResponseWriter, r *http.Request, announce *activ
 	ctx := r.Context()
 	authorURI := note.AttributedTo.ID()
 	page := announcePage{
-		pageBase:    newPageBase(r, Config.Name+" のRT: "+excerpt(note.Content, 40)),
+		pageBase:    newPageBase(r, primary.Name+" のRT: "+excerpt(note.Content, 40)),
 		AnnounceURI: announce.ID,
 		Name:        authorName(ctx, authorURI),
 		AuthorURI:   authorURI,
 		IconURL:     cachedIconURL(ctx, authorURI),
-		Mine:        authorURI == Config.ID(),
+		Mine:        authorURI == primary.ID(),
 		Content:     note.Content,
 		Attachments: noteAttachments(note),
 		Published:   announce.Published,
 		InReplyTo:   note.InReplyTo.ID(),
 		ObjectURI:   note.ID,
 		Excerpt:     excerpt(note.Content, 140),
-		Liked:       isLiked(ctx, note.ID),
+		Liked:       isLiked(ctx, primary, note.ID),
 	}
 	return renderPage(w, "announce", page)
 }
@@ -93,7 +95,7 @@ func htmlAnnounceHandler(w http.ResponseWriter, r *http.Request, announce *activ
 // isLiked はこの投稿にすでにいいねしているかどうかを1件だけ引く。
 // timeline のように一覧全体を並べるページでは reactionState でまとめて
 // 引くが、ここは1件しか要らないので個別に引く。
-func isLiked(ctx context.Context, objectURI string) bool {
-	_, err := client.GetKV(ctx, datastore.KVMyLikes, objectURI)
+func isLiked(ctx context.Context, actor *config.ActorConfig, objectURI string) bool {
+	_, err := client.GetKV(ctx, actorScoped(actor, datastore.KVMyLikes), objectURI)
 	return err == nil
 }
