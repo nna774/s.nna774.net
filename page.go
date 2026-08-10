@@ -184,7 +184,6 @@ func htmlUserHandler(w http.ResponseWriter, r *http.Request, actor *config.Actor
 			URL:         note.ID,
 			InReplyTo:   note.InReplyTo.ID(),
 			Boosted:     true,
-			AuthorName:  authorName(ctx, note.AttributedTo.ID()),
 			AuthorURI:   note.AttributedTo.ID(),
 			AnnounceURI: act.ID,
 			sortKey:     publishedTime(act.Published),
@@ -197,6 +196,16 @@ func htmlUserHandler(w http.ResponseWriter, r *http.Request, actor *config.Actor
 	hasMore := len(creates) >= profileStatusCount
 	if len(items) > profileStatusCount {
 		items = items[:profileStatusCount]
+	}
+
+	// 著者名の解決は切り詰めた後の分だけにする (timelineHandler と同じ
+	// 考え方)。creates と合算する前に全ブーストを解決すると、合算後の
+	// 切り詰めで捨てられる分まで無駄に DynamoDB を叩くことになる。
+	knownActors := map[string]*datastore.KVItem{}
+	for i := range items {
+		if items[i].Boosted {
+			items[i].AuthorName, _ = actorDisplayCached(ctx, knownActors, items[i].AuthorURI)
+		}
 	}
 
 	page := profilePage{
@@ -382,7 +391,6 @@ func statusesHandler(w http.ResponseWriter, r *http.Request) httperror.HttpError
 				ObjectURI:   note.ID,
 				InReplyTo:   note.InReplyTo.ID(),
 				Boosted:     true,
-				AuthorName:  authorName(ctx, note.AttributedTo.ID()),
 				AuthorURI:   note.AttributedTo.ID(),
 				AnnounceURI: act.ID,
 				sortKey:     publishedTime(act.Published),
@@ -396,6 +404,16 @@ func statusesHandler(w http.ResponseWriter, r *http.Request) httperror.HttpError
 	// 「多めに取って捨てる」考え方)。
 	sort.SliceStable(items, func(i, j int) bool { return items[i].sortKey.After(items[j].sortKey) })
 	items, hasNext := paginate(items, skip, statusesPerPage)
+
+	// 著者名の解決はページに残った分だけにする。KVMyBoosts は全件候補な
+	// ので、ページ切り出し前に解決すると表示しないブーストの分まで
+	// 無駄に DynamoDB (GetKV) を叩いてしまう (timelineHandler と同じ理由)。
+	knownActors := map[string]*datastore.KVItem{}
+	for i := range items {
+		if items[i].Boosted {
+			items[i].AuthorName, _ = actorDisplayCached(ctx, knownActors, items[i].AuthorURI)
+		}
+	}
 
 	page := statusesPage{
 		pageBase: newPageBase(r, actor.Name+" の投稿"),
