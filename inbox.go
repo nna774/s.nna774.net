@@ -560,13 +560,19 @@ func createHandler(w http.ResponseWriter, r *http.Request, actor *config.ActorCo
 	if note == nil {
 		return httperror.StatusUnprocessableEntity("Create has no embedded object", nil)
 	}
-	warnIfNotFollowing(ctx, actor, "Create", in.Actor.ID(), note.ID)
+	toMe := notifiesMe(actor, in, note)
+	// 自分宛(リプライ・メンション)は誰でも送ってこられるのが fediverse の
+	// 通常の姿なので、フォロー未確認の警告は「フォロー相手の生投稿として
+	// タイムラインに流れてきた」場合に限る。
+	if !toMe {
+		warnIfNotFollowing(ctx, actor, "Create", in.Actor.ID(), note.ID)
+	}
 	if err := appendToTimeline(ctx, in); err != nil {
 		return httperror.StatusInternalServerError("cannot save to the timeline", err)
 	}
 	// 自分宛のものだけ通知にする。フォロー相手同士の会話まで通知にすると
 	// タイムラインの写しになって役に立たない。
-	if notifiesMe(actor, in, note) {
+	if toMe {
 		notifyOrLog(ctx, actor, in)
 		logf("%v mentioned us in %v", in.Actor.ID(), note.ID)
 	}
