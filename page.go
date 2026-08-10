@@ -849,12 +849,8 @@ func timelineHandler(w http.ResponseWriter, r *http.Request) httperror.HttpError
 			Boosted:     reactions.boosted[note.ID],
 			sortKey:     publishedTime(published),
 		}
-		// authorName / cachedIconURL は自分の分も設定から返す。
-		item.AuthorName = authorName(ctx, actorURI)
-		item.IconURL = cachedIconURL(ctx, actorURI)
 		if boostedBy != "" {
 			item.BoostedByURI = boostedBy
-			item.BoostedByName = authorName(ctx, boostedBy)
 			item.AnnounceURI = act.ID
 		}
 		if isMine {
@@ -870,6 +866,18 @@ func timelineHandler(w http.ResponseWriter, r *http.Request) httperror.HttpError
 		return items[i].sortKey.After(items[j].sortKey)
 	})
 	items, hasNext := paginate(items, skip, timelinePageSize)
+
+	// 著者名・アイコンの解決はここまで捨てずに残った分 (最大 timelinePageSize
+	// 件) だけにする。ソート前の全候補 (take 件 x2) に対してやると、
+	// 表示されない分まで DynamoDB を叩いて無駄に遅くなる。同じ投稿者が
+	// 何度も出てくることもあるので、リクエスト内でキャッシュもする。
+	knownActors := map[string]*datastore.KVItem{}
+	for i := range items {
+		items[i].AuthorName, items[i].IconURL = actorDisplayCached(ctx, knownActors, items[i].AuthorURI)
+		if items[i].BoostedByURI != "" {
+			items[i].BoostedByName, _ = actorDisplayCached(ctx, knownActors, items[i].BoostedByURI)
+		}
+	}
 
 	page := timelinePage{
 		pageBase:  newPageBase(r, "タイムライン"),
@@ -915,6 +923,31 @@ func cachedIconURL(ctx context.Context, actorURI string) string {
 		return it.IconURL
 	}
 	return ""
+}
+
+// actorDisplayCached は authorName / cachedIconURL をまとめて解決する。
+// 同じ actor を何度も表示するタイムラインのようなループ向けに、呼び出し元が
+// 用意したキャッシュを使って lookupKnownActor の呼び出しを actor ごとに
+// 1回にまとめる (素朴に呼ぶと名前用・アイコン用で2回、同じ投稿者が複数回
+// 出てくればさらに倍々に増えてしまう)。
+func actorDisplayCached(ctx context.Context, cache map[string]*datastore.KVItem, actorURI string) (name, iconURL string) {
+	primary := Config.PrimaryActor()
+	if actorURI == primary.ID() {
+		return primary.Name, primary.IconURI
+	}
+	it, ok := cache[actorURI]
+	if !ok {
+		it = lookupKnownActor(ctx, actorURI)
+		cache[actorURI] = it
+	}
+	if it == nil {
+		return actorURI, ""
+	}
+	name = it.Name
+	if name == "" {
+		name = actorURI
+	}
+	return name, it.IconURL
 }
 
 // lookupKnownActor は表示名を持っている項目を探す。フォロー関係を先に見る
