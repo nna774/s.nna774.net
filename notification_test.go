@@ -213,3 +213,48 @@ func TestNotifiesMe(t *testing.T) {
 		})
 	}
 }
+
+// createHandler は自分宛 (notifiesMe が true) のときだけ
+// warnIfNotFollowing をスキップする。フォローしていない相手からの返信は
+// fediverse では日常的に起こるので、そのたびに「フォローしてない相手から
+// 来た」という誤った警告ログを出してはならない。
+func TestCreateHandlerSkipsWarnOnlyForRepliesToMe(t *testing.T) {
+	me := withTestConfig(t)
+	const other = "https://pawoo.net/users/someone"
+	const public = activitystream.ToPublic
+
+	for _, tt := range []struct {
+		name     string
+		note     *activitystream.Object
+		wantWarn bool
+	}{
+		{
+			// フォロー相手の生投稿としてタイムラインに流れてきた場合。従来
+			// 通り警告する。
+			name:     "自分宛でない (フォロー相手の生投稿としてタイムラインに流れてきた)",
+			note:     note("", []string{public}, nil, ""),
+			wantWarn: true,
+		},
+		{
+			// フォローしていない相手からの自分宛リプライ。fediverse では
+			// 誰でも公開投稿に返信できるので日常的に起こる。これがバグの
+			// 再現ケースで、修正前は誤って警告が出ていた。
+			name:     "自分宛の返信",
+			note:     note(me+"/status/3", []string{public}, nil, ""),
+			wantWarn: false,
+		},
+		{
+			name:     "自分へのメンション",
+			note:     note("", []string{public}, nil, me),
+			wantWarn: false,
+		},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			in := &activitystream.Object{Type: activitystream.CreateType, Actor: activitystream.URIRef(other)}
+			toMe := notifiesMe(Config.PrimaryActor(), in, tt.note)
+			if gotWarn := !toMe; gotWarn != tt.wantWarn {
+				t.Errorf("warnIfNotFollowing would be called = %v, want %v", gotWarn, tt.wantWarn)
+			}
+		})
+	}
+}
