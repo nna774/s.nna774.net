@@ -33,10 +33,10 @@
   {{end}}
   <div class="meta">
     <a href="{{.ObjectURI}}">{{datetime .Published}}</a>
-    <a href="/u/{{.LocalPart}}/status/{{.StatusID}}/likes">{{.LikeCount}}件のいいね</a>
-    <a href="/u/{{.LocalPart}}/status/{{.StatusID}}/announces">{{.AnnounceCount}}件のRT</a>
+    <a href="/u/{{.ActorLocalPart}}/status/{{.StatusID}}/likes">{{.LikeCount}}件のいいね</a>
+    <a href="/u/{{.ActorLocalPart}}/status/{{.StatusID}}/announces">{{.AnnounceCount}}件のRT</a>
     {{if .Authed}}
-      <form method="post" action="/u/{{.LocalPart}}/statuses/{{.StatusID}}/delete"
+      <form method="post" action="/u/{{.ActorLocalPart}}/statuses/{{.StatusID}}/delete"
             onsubmit="return confirm('この投稿を削除する。よいか')">
         <button type="submit">削除</button>
       </form>
