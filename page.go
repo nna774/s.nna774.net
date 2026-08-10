@@ -1007,9 +1007,10 @@ type notificationItem struct {
 	// notification は primary / sub 問わず共有ストリームなので、bot 宛の
 	// Follow も混ざって出る。primary 宛のときは空にして、テンプレート側で
 	// 表示を省く (大半が primary 宛なので、そちらを無印にする方が読みやすい)。
+	// 表示名ではなく localpart そのものを出す。sub actor が複数いると
+	// Name は一意とは限らないが、localpart は URL に出ている識別子なので
+	// 確実にどの account かを指せる。
 	RecipientLocalPart string
-	// RecipientName は RecipientLocalPart の表示名。
-	RecipientName string
 	// RecipientCanFollowBack は「フォローを返す」ボタンを出してよいか。
 	// following は primary actor 専用の機能なので、sub actor (bot) 宛の
 	// フォロー通知では常に false (押しても /u/bot/following が無く、かと
@@ -1087,10 +1088,6 @@ func toNotificationItem(ctx context.Context, act *activitystream.Object, excerpt
 	primary := Config.PrimaryActor()
 	if recipient := act.Recipient; recipient != "" && recipient != primary.LocalPart() {
 		item.RecipientLocalPart = recipient
-		item.RecipientName = recipient
-		if a, ok := Config.ActorByLocalPart(recipient); ok {
-			item.RecipientName = a.Name
-		}
 	}
 	// フォロー返しは primary actor の following でしか叩けない。宛先が
 	// primary のときだけ許す。

@@ -85,10 +85,12 @@ func TestNotificationsPageRenders(t *testing.T) {
 				ObjectURI: other + "/statuses/9", Content: "<p>やあ</p>",
 				TargetExcerpt: "返信された投稿", Unread: true},
 			{Kind: kindFollow, ActorName: "someone", ActorURI: other, RecipientCanFollowBack: true},
-			// bot (sub actor) 宛のフォローは宛先ラベルを出し、following を
-			// 持たない bot では「フォローを返す」ボタンを出さない。
+			// bot (sub actor) 宛のフォローは宛先ラベルを localpart で出し、
+			// following を持たない bot では「フォローを返す」ボタンを出さ
+			// ない。sub actor は複数あり得るので表示名ではなく localpart で
+			// 一意に示す。
 			{Kind: kindFollow, ActorName: "someone else", ActorURI: other,
-				RecipientLocalPart: "bot", RecipientName: "bot"},
+				RecipientLocalPart: "bot"},
 			// 取り消しと削除も出来事として並ぶ。元の通知は消さない。
 			{Kind: kindUndoLike, ActorName: "someone", ActorURI: other,
 				TargetURI: me + "/status/1", TargetExcerpt: "いいねを取り消された投稿"},
@@ -118,8 +120,8 @@ func TestNotificationsPageRenders(t *testing.T) {
 		// 返信フォームとフォロー返しボタン（画面遷移せず JS で叩く）。
 		// html/template の JS エスケープで "/" は "\/" になる。
 		"/timeline?in_reply_to=", `followBack(event, 'https:\/\/pawoo.net\/users\/someone', 'nana')`,
-		// bot 宛の通知には宛先ラベルが出る。
-		"bot 宛",
+		// bot 宛の通知には localpart そのままの宛先ラベルが出る。
+		"@bot 宛",
 	} {
 		if !strings.Contains(got, want) {
 			t.Errorf("rendered page does not contain %q", want)
