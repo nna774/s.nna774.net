@@ -205,6 +205,11 @@ type Object struct {
 	// OrderedItems は要素がオブジェクトのことも裸の URI 文字列のことも
 	// ある。outbox は前者、followers / following は後者。
 	OrderedItems []*Ref `json:"orderedItems,omitempty"`
+
+	// Recipient は ActivityStreams の語彙には無い。通知として保存すると
+	// きに、どのローカル actor (localpart) 宛の出来事かを付記するための
+	// アプリ内部の付随情報で、外部への配信では使わない。
+	Recipient string `json:"recipient,omitempty"`
 }
 
 type Endpoints struct {

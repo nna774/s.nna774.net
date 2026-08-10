@@ -3,6 +3,7 @@
   {{range .Items}}
     <article class="notice{{if .Unread}} unread{{end}}">
       <div class="who">
+        {{if .RecipientLocalPart}}<span class="recipient">{{.RecipientName}} 宛</span>{{end}}
         {{if .IconURL}}<img src="{{.IconURL}}" alt="">{{end}}
         <a class="name" href="/remote?actor={{.ActorURI}}">{{.ActorName}}</a>
         <span>{{acct .ActorURI}}</span>
@@ -28,7 +29,7 @@
         {{else}}
           <span>{{datetime .Published}}</span>
         {{end}}
-        {{if eq .Kind "follow"}}
+        {{if and (eq .Kind "follow") .RecipientCanFollowBack}}
           <button type="button" onclick="followBack(event, '{{.ActorURI}}', '{{$.LocalPart}}')">フォローを返す</button>
         {{end}}
       </div>

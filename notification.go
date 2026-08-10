@@ -32,7 +32,7 @@ func isMyStatus(uri string) bool {
 }
 
 // appendNotification は Activity を通知として積む。
-func appendNotification(ctx context.Context, in *activitystream.Object) error {
+func appendNotification(ctx context.Context, actor *config.ActorConfig, in *activitystream.Object) error {
 	id, err := client.Inc(ctx, notificationKey)
 	if err != nil {
 		return err
@@ -48,6 +48,10 @@ func appendNotification(ctx context.Context, in *activitystream.Object) error {
 	// にも積むことがあり、そちらに混ざると保存済みの中身と食い違う。
 	act := *in
 	act.Published = nowRFC3339()
+	// notification は primary / sub 問わず全 actor 分を共有ストリームに
+	// 積む (先頭のコメント参照)。どの actor 宛だったかは Recipient に
+	// 残しておかないと、bot 宛の Follow が nana 宛と見分けが付かなくなる。
+	act.Recipient = actor.LocalPart()
 	return client.Put(ctx, notificationKey, id, &act)
 }
 
@@ -58,7 +62,7 @@ func notifyOrLog(ctx context.Context, actor *config.ActorConfig, in *activitystr
 	// 表示名とアイコンを受信時に控える。フォロワーでない相手からの通知は
 	// これが無いと actor の URI がそのまま並ぶ。
 	cacheActorInfo(ctx, actor, in.Actor.ID())
-	if err := appendNotification(ctx, in); err != nil {
+	if err := appendNotification(ctx, actor, in); err != nil {
 		logf("recording a %v notification from %v failed: %v", in.Type, in.Actor.ID(), err)
 	}
 }

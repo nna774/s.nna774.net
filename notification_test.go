@@ -16,7 +16,8 @@ func withTestConfig(t *testing.T) string {
 	t.Helper()
 	saved := Config
 	primary := &config.ActorConfig{Username: "nana", Primary: true, ActorType: config.ActorTypePerson, Origin: "https://s.example"}
-	Config = &config.Config{Origin: "https://s.example", Actors: []*config.ActorConfig{primary}}
+	bot := &config.ActorConfig{Username: "bot", Name: "bot", ActorType: config.ActorTypeService, Origin: "https://s.example"}
+	Config = &config.Config{Origin: "https://s.example", Actors: []*config.ActorConfig{primary, bot}}
 	t.Cleanup(func() { Config = saved })
 	return primary.ID()
 }
@@ -83,7 +84,11 @@ func TestNotificationsPageRenders(t *testing.T) {
 			{Kind: kindMention, ActorName: "someone", ActorURI: other,
 				ObjectURI: other + "/statuses/9", Content: "<p>やあ</p>",
 				TargetExcerpt: "返信された投稿", Unread: true},
-			{Kind: kindFollow, ActorName: "someone", ActorURI: other},
+			{Kind: kindFollow, ActorName: "someone", ActorURI: other, RecipientCanFollowBack: true},
+			// bot (sub actor) 宛のフォローは宛先ラベルを出し、following を
+			// 持たない bot では「フォローを返す」ボタンを出さない。
+			{Kind: kindFollow, ActorName: "someone else", ActorURI: other,
+				RecipientLocalPart: "bot", RecipientName: "bot"},
 			// 取り消しと削除も出来事として並ぶ。元の通知は消さない。
 			{Kind: kindUndoLike, ActorName: "someone", ActorURI: other,
 				TargetURI: me + "/status/1", TargetExcerpt: "いいねを取り消された投稿"},
@@ -113,10 +118,20 @@ func TestNotificationsPageRenders(t *testing.T) {
 		// 返信フォームとフォロー返しボタン（画面遷移せず JS で叩く）。
 		// html/template の JS エスケープで "/" は "\/" になる。
 		"/timeline?in_reply_to=", `followBack(event, 'https:\/\/pawoo.net\/users\/someone', 'nana')`,
+		// bot 宛の通知には宛先ラベルが出る。
+		"bot 宛",
 	} {
 		if !strings.Contains(got, want) {
 			t.Errorf("rendered page does not contain %q", want)
 		}
+	}
+
+	// bot 宛のフォロー通知にはフォロー返しボタンを出さない (following は
+	// primary actor 専用の機能で、nana として押すと別人をフォロー返す
+	// 誤動作になるため)。primary 宛のフォロー通知にはボタンが出るので、
+	// ボタンの出現回数がちょうど primary 宛の1件分であることを見る。
+	if n := strings.Count(got, "followBack(event"); n != 1 {
+		t.Errorf("followBack button appears %d times, want 1 (only for the primary-recipient follow)", n)
 	}
 }
 

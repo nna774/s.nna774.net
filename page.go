@@ -1003,6 +1003,19 @@ type notificationItem struct {
 	ObjectURI string
 	Published string
 	Unread    bool
+	// RecipientLocalPart はこの通知がどのローカル actor 宛だったか。
+	// notification は primary / sub 問わず共有ストリームなので、bot 宛の
+	// Follow も混ざって出る。primary 宛のときは空にして、テンプレート側で
+	// 表示を省く (大半が primary 宛なので、そちらを無印にする方が読みやすい)。
+	RecipientLocalPart string
+	// RecipientName は RecipientLocalPart の表示名。
+	RecipientName string
+	// RecipientCanFollowBack は「フォローを返す」ボタンを出してよいか。
+	// following は primary actor 専用の機能なので、sub actor (bot) 宛の
+	// フォロー通知では常に false (押しても /u/bot/following が無く、かと
+	// いって nana の following を叩かせると別人としてフォロー返す誤動作
+	// になる)。
+	RecipientCanFollowBack bool
 }
 
 type notificationsPage struct {
@@ -1015,7 +1028,8 @@ const notificationPageSize = 40
 // notificationsHandler は primary actor 専用のページだが、通知そのものは
 // 全 Actor (primary / sub 問わず) 分をまとめて表示する。通知ストリームは
 // ローカル actor に依存しないインスタンス全体の共有リソースなので、bot
-// 宛の Follow もここに混ざって出る。
+// 宛の Follow もここに混ざって出るが、Recipient が primary 以外のときは
+// 宛先をラベルとして出して区別する (toNotificationItem 参照)。
 func notificationsHandler(w http.ResponseWriter, r *http.Request) httperror.HttpError {
 	ctx := r.Context()
 
@@ -1069,6 +1083,18 @@ func toNotificationItem(ctx context.Context, act *activitystream.Object, excerpt
 	}
 	item.ActorName = authorName(ctx, item.ActorURI)
 	item.IconURL = cachedIconURL(ctx, item.ActorURI)
+
+	primary := Config.PrimaryActor()
+	if recipient := act.Recipient; recipient != "" && recipient != primary.LocalPart() {
+		item.RecipientLocalPart = recipient
+		item.RecipientName = recipient
+		if a, ok := Config.ActorByLocalPart(recipient); ok {
+			item.RecipientName = a.Name
+		}
+	}
+	// フォロー返しは primary actor の following でしか叩けない。宛先が
+	// primary のときだけ許す。
+	item.RecipientCanFollowBack = item.RecipientLocalPart == ""
 
 	switch act.Type {
 	case activitystream.LikeType, activitystream.AnnounceType:
