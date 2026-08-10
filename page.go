@@ -552,34 +552,43 @@ func favoritesHandler(w http.ResponseWriter, r *http.Request) httperror.HttpErro
 
 type statusPage struct {
 	pageBase
-	Name          string
-	IconURL       string
-	Content       string
-	Attachments   []attachmentItem
-	Published     string
-	ObjectURI     string
-	InReplyTo     string
-	Excerpt       string
-	StatusID      int
-	LikeCount     int
-	AnnounceCount int
+	// ActorLocalPart はこの投稿の持ち主 (primary か sub actor か) の
+	// localPart。pageBase.LocalPart は常に primary actor 固定 (サイト
+	// 全体のブランディング用) なので、いいね・RT・削除など「この投稿の
+	// actor 宛」の URL にはこちらを使わなければならない。取り違えると
+	// sub actor の投稿を primary actor 名義の URL で操作しようとして
+	// 対象が見つからなかったり、たまたま同じ連番の別人の投稿を操作して
+	// しまったりする。
+	ActorLocalPart string
+	Name           string
+	IconURL        string
+	Content        string
+	Attachments    []attachmentItem
+	Published      string
+	ObjectURI      string
+	InReplyTo      string
+	Excerpt        string
+	StatusID       int
+	LikeCount      int
+	AnnounceCount  int
 }
 
 func htmlStatusHandler(w http.ResponseWriter, r *http.Request, actor *config.ActorConfig, id int, note *activitystream.Object) httperror.HttpError {
 	ctx := r.Context()
 	page := statusPage{
-		pageBase:      newPageBase(r, actor.Name+": "+excerpt(note.Content, 40)),
-		Name:          actor.Name,
-		IconURL:       actor.IconURI,
-		Content:       note.Content,
-		Attachments:   noteAttachments(note),
-		Published:     note.Published,
-		ObjectURI:     note.ID,
-		InReplyTo:     note.InReplyTo.ID(),
-		Excerpt:       excerpt(note.Content, 140),
-		StatusID:      id,
-		LikeCount:     countReactors(ctx, actorScoped(actor, datastore.KVLikes), note.ID),
-		AnnounceCount: countReactors(ctx, actorScoped(actor, datastore.KVAnnounced), note.ID),
+		pageBase:       newPageBase(r, actor.Name+": "+excerpt(note.Content, 40)),
+		ActorLocalPart: actor.LocalPart(),
+		Name:           actor.Name,
+		IconURL:        actor.IconURI,
+		Content:        note.Content,
+		Attachments:    noteAttachments(note),
+		Published:      note.Published,
+		ObjectURI:      note.ID,
+		InReplyTo:      note.InReplyTo.ID(),
+		Excerpt:        excerpt(note.Content, 140),
+		StatusID:       id,
+		LikeCount:      countReactors(ctx, actorScoped(actor, datastore.KVLikes), note.ID),
+		AnnounceCount:  countReactors(ctx, actorScoped(actor, datastore.KVAnnounced), note.ID),
 	}
 	return renderPage(w, "status", page)
 }
