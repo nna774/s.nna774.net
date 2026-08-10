@@ -24,13 +24,6 @@ const notificationScanLimit = 500
 // 「99+」相当の扱いでよく、全件数える必要は無い。
 const unreadCountLimit = 100
 
-// isMyStatus は URI がローカルのいずれかの Actor (primary / sub 問わず) の
-// 投稿かを返す。
-func isMyStatus(uri string) bool {
-	_, _, ok := actorAndIDFromStatusURI(uri)
-	return ok
-}
-
 // appendNotification は Activity を通知として積む。
 func appendNotification(ctx context.Context, actor *config.ActorConfig, in *activitystream.Object) error {
 	id, err := client.Inc(ctx, notificationKey)
@@ -90,13 +83,18 @@ func notifiedObject(ctx context.Context, objectURI string) bool {
 	return false
 }
 
-// notifiesMe は受信した Create / Update が自分宛かを返す。
+// notifiesMe は受信した Create / Update が actor 自身宛かを返す。
 //
-// 自分の投稿への返信、to / cc に自分が入っているもの、本文の Mention タグ
-// が自分を指しているものが該当する。フォロー相手同士の会話はタイムライン
-// に流すだけで通知にはしない。
+// actor 自身の投稿への返信、to / cc に actor が入っているもの、本文の
+// Mention タグが actor を指しているものが該当する。フォロー相手同士の会話
+// はタイムラインに流すだけで通知にはしない。
+//
+// InReplyTo の判定は「ローカルのどれかの Actor の投稿か」ではなく「この
+// actor 自身の投稿か」まで見る。前者だと、ある actor (例: bot) の inbox に
+// 別の actor (例: nana) の投稿への返信が届いたとき、bot 宛と誤認識して
+// しまう (通知の宛先ラベルを誤らせる)。
 func notifiesMe(actor *config.ActorConfig, in *activitystream.Object, note *activitystream.Object) bool {
-	if isMyStatus(note.InReplyTo.ID()) {
+	if owner, _, ok := actorAndIDFromStatusURI(note.InReplyTo.ID()); ok && owner == actor {
 		return true
 	}
 	me := actor.ID()

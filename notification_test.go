@@ -22,30 +22,6 @@ func withTestConfig(t *testing.T) string {
 	return primary.ID()
 }
 
-func TestIsMyStatus(t *testing.T) {
-	me := withTestConfig(t)
-
-	for _, tt := range []struct {
-		in   string
-		want bool
-	}{
-		{me + "/status/12", true},
-		{me + "/status/0", true},
-		{me, false},
-		{"", false},
-		{"https://pawoo.net/users/kugayama/status/12", false},
-		// origin が違う。他インスタンスに同じ形の URI を作られても
-		// 自分の投稿と誤認してはならない。
-		{"https://evil.example/u/nana/status/12", false},
-		// prefix が途中まで一致するだけの別ホスト。
-		{"https://s.example.evil/u/nana/status/12", false},
-	} {
-		if got := isMyStatus(tt.in); got != tt.want {
-			t.Errorf("isMyStatus(%q) = %v, want %v", tt.in, got, tt.want)
-		}
-	}
-}
-
 // note は自分宛判定のテスト用に Note を組む。
 func note(inReplyTo string, to, cc []string, mentionHref string) *activitystream.Object {
 	n := &activitystream.Object{
@@ -139,70 +115,99 @@ func TestNotificationsPageRenders(t *testing.T) {
 
 func TestNotifiesMe(t *testing.T) {
 	me := withTestConfig(t)
+	bot, _ := Config.ActorByLocalPart("bot")
 	const other = "https://pawoo.net/users/someone"
 	const public = activitystream.ToPublic
 
 	for _, tt := range []struct {
-		name string
-		in   *activitystream.Object
-		note *activitystream.Object
-		want bool
+		name  string
+		actor *config.ActorConfig
+		in    *activitystream.Object
+		note  *activitystream.Object
+		want  bool
 	}{
 		{
-			name: "自分の投稿への返信",
-			in:   &activitystream.Object{Type: activitystream.CreateType},
-			note: note(me+"/status/3", []string{public}, nil, ""),
-			want: true,
+			name:  "自分の投稿への返信",
+			actor: Config.PrimaryActor(),
+			in:    &activitystream.Object{Type: activitystream.CreateType},
+			note:  note(me+"/status/3", []string{public}, nil, ""),
+			want:  true,
 		},
 		{
-			name: "cc に自分",
-			in:   &activitystream.Object{Type: activitystream.CreateType},
-			note: note("", []string{public}, []string{me}, ""),
-			want: true,
+			name:  "cc に自分",
+			actor: Config.PrimaryActor(),
+			in:    &activitystream.Object{Type: activitystream.CreateType},
+			note:  note("", []string{public}, []string{me}, ""),
+			want:  true,
 		},
 		{
-			name: "to に自分",
-			in:   &activitystream.Object{Type: activitystream.CreateType},
-			note: note("", []string{me}, nil, ""),
-			want: true,
+			name:  "to に自分",
+			actor: Config.PrimaryActor(),
+			in:    &activitystream.Object{Type: activitystream.CreateType},
+			note:  note("", []string{me}, nil, ""),
+			want:  true,
 		},
 		{
 			// 宛先が Activity 側にしか書かれない実装がある。
-			name: "Activity の cc に自分",
-			in:   &activitystream.Object{Type: activitystream.CreateType, Cc: []string{me}},
-			note: note("", []string{public}, nil, ""),
-			want: true,
+			name:  "Activity の cc に自分",
+			actor: Config.PrimaryActor(),
+			in:    &activitystream.Object{Type: activitystream.CreateType, Cc: []string{me}},
+			note:  note("", []string{public}, nil, ""),
+			want:  true,
 		},
 		{
-			name: "Mention タグが自分を指す",
-			in:   &activitystream.Object{Type: activitystream.CreateType},
-			note: note("", []string{public}, nil, me),
-			want: true,
+			name:  "Mention タグが自分を指す",
+			actor: Config.PrimaryActor(),
+			in:    &activitystream.Object{Type: activitystream.CreateType},
+			note:  note("", []string{public}, nil, me),
+			want:  true,
 		},
 		{
 			// フォロー相手同士の会話。タイムラインには流すが通知にはしない。
-			name: "他人宛の返信",
-			in:   &activitystream.Object{Type: activitystream.CreateType},
-			note: note(other+"/statuses/9", []string{public}, []string{other}, other),
-			want: false,
+			name:  "他人宛の返信",
+			actor: Config.PrimaryActor(),
+			in:    &activitystream.Object{Type: activitystream.CreateType},
+			note:  note(other+"/statuses/9", []string{public}, []string{other}, other),
+			want:  false,
 		},
 		{
-			name: "ただの公開投稿",
-			in:   &activitystream.Object{Type: activitystream.CreateType},
-			note: note("", []string{public}, nil, ""),
-			want: false,
+			name:  "ただの公開投稿",
+			actor: Config.PrimaryActor(),
+			in:    &activitystream.Object{Type: activitystream.CreateType},
+			note:  note("", []string{public}, nil, ""),
+			want:  false,
 		},
 		{
 			// Public 宛や followers 宛を自分宛と誤認しないこと。誤認すると
 			// フォロー相手の投稿すべてが通知になる。
-			name: "followers 宛",
-			in:   &activitystream.Object{Type: activitystream.CreateType},
-			note: note("", []string{other + "/followers"}, []string{public}, ""),
-			want: false,
+			name:  "followers 宛",
+			actor: Config.PrimaryActor(),
+			in:    &activitystream.Object{Type: activitystream.CreateType},
+			note:  note("", []string{other + "/followers"}, []string{public}, ""),
+			want:  false,
+		},
+		{
+			// bot 自身の投稿への返信は bot 宛。
+			name:  "bot の投稿への返信 (bot として判定)",
+			actor: bot,
+			in:    &activitystream.Object{Type: activitystream.CreateType},
+			note:  note(bot.ID()+"/status/1", []string{public}, nil, ""),
+			want:  true,
+		},
+		{
+			// nana の投稿への返信を bot の inbox に (取り違えなどで) 送って
+			// きても、bot 宛と誤認識してはならない。別の actor の投稿は
+			// 「ローカルのどれかの投稿」ではあっても「この actor 自身の
+			// 投稿」ではない。
+			name:  "nana の投稿への返信を bot として判定 (誤認しないこと)",
+			actor: bot,
+			in:    &activitystream.Object{Type: activitystream.CreateType},
+			note:  note(me+"/status/3", []string{public}, nil, ""),
+			want:  false,
 		},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
-			if got := notifiesMe(Config.PrimaryActor(), tt.in, tt.note); got != tt.want {
+			if got := notifiesMe(tt.actor, tt.in, tt.note); got != tt.want {
 				t.Errorf("notifiesMe() = %v, want %v", got, tt.want)
 			}
 		})
