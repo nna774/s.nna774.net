@@ -1,6 +1,7 @@
 # bot account 対応 設計
 
-**ステータス: 未実装（設計のみ）。実装前の合意事項をまとめたもの。**
+**ステータス: 実装済み（#42, #43, #45, および本ドキュメント更新時点の
+sub actor 向け Like/Announce/Create 対応）。**
 
 ## 背景・目的
 
@@ -97,17 +98,40 @@ sub actor には実装しない。これらは primary actor 専用のまま。
 
 ## inbox のスコープ
 
-sub actor の inbox は `Follow` / `Undo Follow` のみ処理し、フォロワーを
-蓄積する（`auto_accept_follow` に従い自動承認）。それ以外の Activity 種別
-（Like・Announce・Create（返信）・Undo（Follow 以外）等）は HTTP Signature の
-検証・`keyId`/`actor` の一致確認は今まで通り実施した上で、中身は処理せず
-黙って受理（202 等）して捨てる。なりすまし対策としての検証は省略しない。
+sub actor の inbox は `Follow` / `Undo Follow` に加え、自分自身の投稿への
+`Like` / `Announce` / `Create`（返信）とそれらの `Undo` を処理する
+（`likeHandler` / `announceHandler` / `createHandler` / `undoHandler` は
+primary actor と共通のコードパスを使う）。
+
+sub actor は誰もフォローせず following・timeline を持たないため、以下の
+経路は primary actor 専用のまま各ハンドラ内で `actor.Primary` により
+分岐してスキップする:
+
+- `announceHandler` の「フォロー相手が他人の投稿をブーストしたのでタイム
+  ラインに流す」経路（自分の投稿以外を対象にした Announce が sub actor 宛
+  に届くのは想定外で、共有タイムラインを汚さないよう黙って捨てる）
+- `createHandler` の `warnIfNotFollowing` によるログ・タイムライン保存
+  （bot 宛のリプライは通知にだけ出す。タイムラインに流し込む先が無い）
+
+それ以外の Activity 種別（Accept・Reject・Delete・Undo(Follow/Like/Announce
+以外) 等）は HTTP Signature の検証・`keyId`/`actor` の一致確認は今まで通り
+実施した上で、中身は処理せず黙って受理（202 等）して捨てる。なりすまし
+対策としての検証は省略しない。
 
 ## 通知
 
-sub actor 宛の Follow / フォロワー増減も、primary actor（nana）の
-`/notifications` に統合して表示する。通知フィード自体はインスタンス全体で
-共有の単一ストリーム（後述の datastore 設計で「共有リソース」として扱う）。
+sub actor 宛の Follow / フォロワー増減、および sub actor 自身の投稿への
+Like・Announce・返信も、primary actor（nana）の `/notifications` に統合し
+て表示する。通知フィード自体はインスタンス全体で共有の単一ストリーム
+（後述の datastore 設計で「共有リソース」として扱う）。
+
+どの local actor 宛の通知かは Activity 側に持たせず、保存時に付随情報
+（`activitystream.Object.Recipient`、ActivityStreams の語彙ではない内部用
+フィールド）として actor の localpart を書き込む。宛先は「その inbox を
+物理的に受けた actor」ではなく「対象コンテンツの持ち主 (owner)」で決める
+（`likeHandler` / `announceHandler` / `undoHandler` は target の URI から
+owner を逆引きして使う）。primary 以外が宛先のときは通知一覧に
+`@<localpart> 宛` のラベルを出して区別する。
 
 ## datastore のキー設計
 
@@ -180,8 +204,10 @@ sub actor もそれぞれ独立した RSA 鍵ペアと API トークンを持つ
 
 ## v1 のスコープ外（将来必要になったら検討）
 
-- sub actor の Like / Announce / 返信の受信処理
 - sub actor 専用の timeline 閲覧・following 管理 UI
 - sub actor の投稿に対する自分からの Like / Announce（フォローしないので不要）
 - primary actor 以外を複数持つ場合の webfinger 上のデフォルト解決の曖昧さ
   （`primary: true` は1つだけという前提が崩れるケース）
+
+（sub actor 自身の投稿への Like / Announce / 返信の受信処理は「inbox の
+スコープ」節の通り実装済み）

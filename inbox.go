@@ -112,9 +112,14 @@ func dispatchInbox(w http.ResponseWriter, r *http.Request, actor *config.ActorCo
 	return nil
 }
 
-// dispatchSubActorInbox は bot 等 sub actor の inbox。Follow / Undo(Follow)
-// だけを処理して独自のフォロワーを蓄積する。sub actor は誰もフォローせず、
-// Like・Announce・返信の受信処理も持たない (v1 のスコープ外)。
+// dispatchSubActorInbox は bot 等 sub actor の inbox。Follow / Undo に加え、
+// 自分の投稿への Like・Announce・返信 (Create/Update) を通知にする。
+//
+// sub actor は誰もフォローせず following・timeline を持たないため、
+// 「フォロー相手の投稿をタイムラインに流す」経路 (announceHandler の他人の
+// 投稿のブースト・createHandler のタイムライン保存) は primary actor 専用
+// のまま各ハンドラ内で actor.Primary により分岐してスキップする。sub actor
+// 自身の投稿に対する反応だけが通知に載る。
 //
 // 署名検証と keyId/actor の一致確認は dispatchInbox に来る前の
 // authenticateInbox で primary actor と同じく必ず通っている。なりすまし
@@ -123,9 +128,18 @@ func dispatchSubActorInbox(w http.ResponseWriter, r *http.Request, actor *config
 	switch in.Type {
 	case activitystream.FollowType:
 		return followHandler(w, r, actor, in)
+	case activitystream.LikeType:
+		return likeHandler(w, r, actor, in)
+	case activitystream.AnnounceType:
+		return announceHandler(w, r, actor, in)
+	case activitystream.CreateType, activitystream.UpdateType:
+		return createHandler(w, r, actor, in)
 	case activitystream.UndoType:
-		if inner := in.Object.Item(); inner != nil && inner.Type == activitystream.FollowType {
-			return undoHandler(w, r, actor, in)
+		if inner := in.Object.Item(); inner != nil {
+			switch inner.Type {
+			case activitystream.FollowType, activitystream.LikeType, activitystream.AnnounceType:
+				return undoHandler(w, r, actor, in)
+			}
 		}
 	}
 	logf("inbox: ignoring %q for sub actor %v", in.Type, actor.ID())
@@ -151,7 +165,9 @@ func warnIfNotFollowing(ctx context.Context, actor *config.ActorConfig, kind, ac
 }
 
 // announceHandler はブースト。他人の投稿のブーストはタイムラインに載せ、
-// 自分の投稿のブーストは通知にする。primary actor でのみ呼ばれる。
+// 自分の投稿のブーストは通知にする。sub actor では自分の投稿のブースト
+// (前者の分岐) しか起こらない想定 (誰もフォローしないので他人の投稿の
+// ブーストが届くことはない)。
 func announceHandler(w http.ResponseWriter, r *http.Request, actor *config.ActorConfig, in *activitystream.Object) httperror.HttpError {
 	ctx := r.Context()
 	target := in.Object.ID()
@@ -172,8 +188,22 @@ func announceHandler(w http.ResponseWriter, r *http.Request, actor *config.Actor
 		}); err != nil {
 			return httperror.StatusInternalServerError("cannot record the Announce", err)
 		}
-		notifyOrLog(ctx, actor, in)
+		// 通知の宛先は、この inbox を受けた actor ではなく実際にブースト
+		// された投稿の持ち主 (owner)。誰かが取り違えて別の actor の inbox
+		// にこの Announce を送ってきても、宛先ラベルを誤らせないため。
+		notifyOrLog(ctx, owner, in)
 		logf("%v boosted %v", in.Actor.ID(), target)
+		respondText(w, http.StatusAccepted, "accepted\n")
+		return nil
+	}
+
+	// ここから先は「フォロー相手が他人の投稿をブーストしたのでタイムライン
+	// に流す」経路。sub actor は誰もフォローせず timeline も持たないため、
+	// 自分の投稿以外を対象にした Announce が sub actor 宛に届くのは想定外
+	// (誰かが的外れに送ってきた場合など) であり、共有タイムラインを汚さない
+	// よう黙って捨てる。
+	if !actor.Primary {
+		logf("inbox: ignoring Announce of %v for sub actor %v (not its own post)", target, actor.ID())
 		respondText(w, http.StatusAccepted, "accepted\n")
 		return nil
 	}
@@ -249,7 +279,7 @@ func verifyFetchedNote(note *activitystream.Object, uri string) error {
 	return nil
 }
 
-// likeHandler は自分の投稿への Like を記録する。primary actor でのみ呼ばれる。
+// likeHandler は自分の投稿への Like を記録する。
 func likeHandler(w http.ResponseWriter, r *http.Request, actor *config.ActorConfig, in *activitystream.Object) httperror.HttpError {
 	ctx := r.Context()
 	target := in.Object.ID()
@@ -267,7 +297,9 @@ func likeHandler(w http.ResponseWriter, r *http.Request, actor *config.ActorConf
 	}); err != nil {
 		return httperror.StatusInternalServerError("cannot record the Like", err)
 	}
-	notifyOrLog(ctx, actor, in)
+	// 通知の宛先は、この inbox を受けた actor ではなく実際にいいねされた
+	// 投稿の持ち主 (owner)。announceHandler の自分宛ブーストと同じ理由。
+	notifyOrLog(ctx, owner, in)
 	logf("%v liked %v", actorID, target)
 	respondText(w, http.StatusAccepted, "accepted\n")
 	return nil
@@ -462,9 +494,8 @@ func followHandler(w http.ResponseWriter, r *http.Request, actor *config.ActorCo
 	return nil
 }
 
-// undoHandler は Undo(Follow) を処理する。Like や Announce の Undo は
-// 内側の type で分岐する (primary actor でのみ起こる。sub actor の inbox は
-// Undo(Follow) 以外を undoHandler に渡さない)。
+// undoHandler は Undo(Follow) / Undo(Like) / Undo(Announce) を処理する。
+// 内側の type で分岐する。primary / sub actor どちらの inbox からも呼ばれる。
 func undoHandler(w http.ResponseWriter, r *http.Request, actor *config.ActorConfig, in *activitystream.Object) httperror.HttpError {
 	ctx := r.Context()
 	actorID := in.Actor.ID()
@@ -502,11 +533,13 @@ func undoHandler(w http.ResponseWriter, r *http.Request, actor *config.ActorConf
 					logf("removing the Announce of %v by %v failed: %v", target, actorID, err)
 				}
 			}
+			// 取り消し自体を出来事として積む。元の通知を消す実装にすると、
+			// 見る前に取り消された場合に「いいねが付いて取り消された」ことに
+			// 気付く手段が無くなる。likes は現在の状態なので消すのが正しい。
+			// 宛先は取り消された対象の持ち主 (owner)。ここを受けた actor
+			// ではない。
+			notifyOrLog(ctx, owner, in)
 		}
-		// 取り消し自体を出来事として積む。元の通知を消す実装にすると、
-		// 見る前に取り消された場合に「いいねが付いて取り消された」ことに
-		// 気付く手段が無くなる。likes は現在の状態なので消すのが正しい。
-		notifyOrLog(ctx, actor, in)
 		logf("%v undid their %v on %v", actorID, inner.Type, target)
 	default:
 		innerType := ""
@@ -561,14 +594,19 @@ func createHandler(w http.ResponseWriter, r *http.Request, actor *config.ActorCo
 		return httperror.StatusUnprocessableEntity("Create has no embedded object", nil)
 	}
 	toMe := notifiesMe(actor, in, note)
-	// 自分宛(リプライ・メンション)は誰でも送ってこられるのが fediverse の
-	// 通常の姿なので、フォロー未確認の警告は「フォロー相手の生投稿として
-	// タイムラインに流れてきた」場合に限る。
-	if !toMe {
-		warnIfNotFollowing(ctx, actor, "Create", in.Actor.ID(), note.ID)
-	}
-	if err := appendToTimeline(ctx, in); err != nil {
-		return httperror.StatusInternalServerError("cannot save to the timeline", err)
+	// フォロー相手の生投稿をタイムラインに流す経路は primary actor 専用。
+	// sub actor は following も timeline も持たないので、bot 宛のリプライを
+	// ここで流し込む先が無い (通知にだけ出す。下の notifiesMe 参照)。
+	if actor.Primary {
+		// 自分宛(リプライ・メンション)は誰でも送ってこられるのが fediverse
+		// の通常の姿なので、フォロー未確認の警告は「フォロー相手の生投稿
+		// としてタイムラインに流れてきた」場合に限る。
+		if !toMe {
+			warnIfNotFollowing(ctx, actor, "Create", in.Actor.ID(), note.ID)
+		}
+		if err := appendToTimeline(ctx, in); err != nil {
+			return httperror.StatusInternalServerError("cannot save to the timeline", err)
+		}
 	}
 	// 自分宛のものだけ通知にする。フォロー相手同士の会話まで通知にすると
 	// タイムラインの写しになって役に立たない。
