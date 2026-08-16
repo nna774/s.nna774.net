@@ -1044,6 +1044,11 @@ type notificationItem struct {
 	// いって nana の following を叩かせると別人としてフォロー返す誤動作
 	// になる)。
 	RecipientCanFollowBack bool
+	// RecipientFollowState は kind が follow かつ RecipientCanFollowBack の
+	// ときだけ意味を持つ。相手を既にフォロー中/申請中なら "accepted" /
+	// "pending"、まだなら "" (datastore.FollowState* と同じ値)。ボタンを
+	// 出すか「返し済み」等の表示にするかをテンプレート側で出し分ける。
+	RecipientFollowState string
 }
 
 type notificationsPage struct {
@@ -1130,6 +1135,9 @@ func toNotificationItem(ctx context.Context, act *activitystream.Object, excerpt
 		item.TargetExcerpt = myStatusExcerpt(ctx, item.TargetURI, excerpts)
 	case activitystream.FollowType:
 		item.Kind = kindFollow
+		if item.RecipientCanFollowBack {
+			item.RecipientFollowState = followStateOf(ctx, primary, item.ActorURI)
+		}
 	case activitystream.CreateType, activitystream.UpdateType:
 		note := act.Object.Item()
 		if note == nil {

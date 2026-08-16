@@ -30,7 +30,13 @@
           <span>{{datetime .Published}}</span>
         {{end}}
         {{if and (eq .Kind "follow") .RecipientCanFollowBack}}
-          <button type="button" onclick="followBack(event, '{{.ActorURI}}', '{{$.LocalPart}}')">フォローを返す</button>
+          {{if eq .RecipientFollowState "accepted"}}
+            <span>フォロー返し済み</span>
+          {{else if eq .RecipientFollowState "pending"}}
+            <span>フォロー申請中</span>
+          {{else}}
+            <button type="button" onclick="followBack(event, '{{.ActorURI}}', '{{$.LocalPart}}')">フォローを返す</button>
+          {{end}}
         {{end}}
       </div>
     </article>
