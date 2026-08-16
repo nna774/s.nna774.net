@@ -7,6 +7,7 @@ import (
 
 	"github.com/nna774/s.nna774.net/activitystream"
 	"github.com/nna774/s.nna774.net/config"
+	"github.com/nna774/s.nna774.net/datastore"
 	"github.com/nna774/s.nna774.net/web"
 )
 
@@ -61,6 +62,12 @@ func TestNotificationsPageRenders(t *testing.T) {
 				ObjectURI: other + "/statuses/9", Content: "<p>やあ</p>",
 				TargetExcerpt: "返信された投稿", Unread: true},
 			{Kind: kindFollow, ActorName: "someone", ActorURI: other, RecipientCanFollowBack: true},
+			// 既にフォロー中/申請中の相手からのフォローには、ボタンでは
+			// なく状態表示を出す (二重にフォロー申請できてしまうのを防ぐ)。
+			{Kind: kindFollow, ActorName: "already followed", ActorURI: other,
+				RecipientCanFollowBack: true, RecipientFollowState: datastore.FollowStateAccepted},
+			{Kind: kindFollow, ActorName: "pending", ActorURI: other,
+				RecipientCanFollowBack: true, RecipientFollowState: datastore.FollowStatePending},
 			// bot (sub actor) 宛のフォローは宛先ラベルを localpart で出し、
 			// following を持たない bot では「フォローを返す」ボタンを出さ
 			// ない。sub actor は複数あり得るので表示名ではなく localpart で
@@ -98,18 +105,19 @@ func TestNotificationsPageRenders(t *testing.T) {
 		"/timeline?in_reply_to=", `followBack(event, 'https:\/\/pawoo.net\/users\/someone', 'nana')`,
 		// bot 宛の通知には localpart そのままの宛先ラベルが出る。
 		"@bot 宛",
+		// 既にフォロー中/申請中なら、ボタンの代わりに状態を出す。
+		"フォロー返し済み", "フォロー申請中",
 	} {
 		if !strings.Contains(got, want) {
 			t.Errorf("rendered page does not contain %q", want)
 		}
 	}
 
-	// bot 宛のフォロー通知にはフォロー返しボタンを出さない (following は
-	// primary actor 専用の機能で、nana として押すと別人をフォロー返す
-	// 誤動作になるため)。primary 宛のフォロー通知にはボタンが出るので、
-	// ボタンの出現回数がちょうど primary 宛の1件分であることを見る。
+	// フォロー返しボタンが出るのは、primary 宛かつまだフォロー返して
+	// いない1件だけ。bot 宛は following を持たないため常に出さず、
+	// 既にフォロー中/申請中の相手には状態表示に切り替わりボタンは消える。
 	if n := strings.Count(got, "followBack(event"); n != 1 {
-		t.Errorf("followBack button appears %d times, want 1 (only for the primary-recipient follow)", n)
+		t.Errorf("followBack button appears %d times, want 1 (only for the not-yet-followed-back, primary-recipient follow)", n)
 	}
 }
 
