@@ -244,6 +244,51 @@ func announceHandler(w http.ResponseWriter, r *http.Request, actor *config.Actor
 	return nil
 }
 
+// shouldFilterReply はフォロー相手の返信をタイムラインから弾くべきかを返す。
+//
+// Mastodon のホームタイムラインは「返信で、かつ返信先を自分がフォローして
+// おらず、かつ返信先が自分自身でも投稿者自身 (スレッドの続き) でもない」
+// ものを流さない。フォロー相手同士でも、知らない相手との会話まで見えると
+// 読みにくいための挙動で、このサーバにも同じフィルタを入れる。呼び出し側
+// (createHandler) で「自分宛」はここに来る前に弾いているので、ここでは
+// 返信先が自分自身かどうかまでは見ない。
+//
+// 返信先の投稿者は URI からは分からないので、ローカルの投稿でなければ引きに
+// 行く。引けない (削除済み・引けないインスタンスなど) 場合は判断できない
+// ので流す側に倒す。フィルタで誤って隠すより、漏れて見える方がまだましで
+// ある。
+func shouldFilterReply(ctx context.Context, actor *config.ActorConfig, in *activitystream.Object, note *activitystream.Object) bool {
+	replyURI := note.InReplyTo.ID()
+	if replyURI == "" {
+		return false
+	}
+	poster := in.Actor.ID()
+	target := replyTargetAuthor(ctx, actor, replyURI, note.ID)
+	if target == "" || target == poster {
+		// スレッドの続き (自分自身への返信) は弾かない。
+		return false
+	}
+	return !isFollowing(ctx, actor, target)
+}
+
+// replyTargetAuthor は返信先の投稿者を返す。分からなければ空文字列。
+//
+// 返信先の投稿者は URI からは分からないので、ローカルの投稿でなければ引きに
+// 行く。引けない (削除済み・引けないインスタンスなど) 場合は空文字列を返し、
+// 呼び出し側 (shouldFilterReply) で「判断できないので流す」扱いにする。
+func replyTargetAuthor(ctx context.Context, actor *config.ActorConfig, replyURI, noteID string) string {
+	if owner, _, ok := actorAndIDFromStatusURI(replyURI); ok {
+		// ローカル actor 自身の投稿への返信。
+		return owner.ID()
+	}
+	parent, err := fetchVerifiedNote(ctx, actor, replyURI)
+	if err != nil {
+		logf("inbox: cannot resolve reply target %v (%v); not filtering %v", replyURI, err, noteID)
+		return ""
+	}
+	return parent.AttributedTo.ID()
+}
+
 // fetchVerifiedNote はある URI の投稿を引いて中身を確かめる。ブーストの
 // 埋め込みだけでなく、いいねした投稿の本文スナップショットにも使う。
 func fetchVerifiedNote(ctx context.Context, actor *config.ActorConfig, uri string) (*activitystream.Object, error) {
@@ -604,8 +649,13 @@ func createHandler(w http.ResponseWriter, r *http.Request, actor *config.ActorCo
 		if !toMe {
 			warnIfNotFollowing(ctx, actor, "Create", in.Actor.ID(), note.ID)
 		}
-		if err := appendToTimeline(ctx, in); err != nil {
-			return httperror.StatusInternalServerError("cannot save to the timeline", err)
+		// 自分宛の返信は誰からでも常に流す。それ以外は Mastodon のホーム
+		// タイムラインと同じく、返信先も自分がフォローしていない会話は
+		// 流さない (shouldFilterReply 参照)。
+		if toMe || !shouldFilterReply(ctx, actor, in, note) {
+			if err := appendToTimeline(ctx, in); err != nil {
+				return httperror.StatusInternalServerError("cannot save to the timeline", err)
+			}
 		}
 	}
 	// 自分宛のものだけ通知にする。フォロー相手同士の会話まで通知にすると
