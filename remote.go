@@ -33,6 +33,7 @@ type remoteProfilePage struct {
 
 	Name        string
 	ActorURI    string
+	Acct        string
 	IconURL     string
 	Summary     string
 	StatusCount int
@@ -78,6 +79,7 @@ func remoteProfileHandler(w http.ResponseWriter, r *http.Request) httperror.Http
 
 	page.Found = true
 	page.ActorURI = actor.ID
+	page.Acct = acctOf(actor)
 	page.Name, page.IconURL = actorDisplay(actor)
 	page.Summary = actor.Summary
 	page.Statuses, page.StatusCount = remoteRecentStatuses(ctx, primary, actor)
@@ -90,6 +92,20 @@ func remoteProfileHandler(w http.ResponseWriter, r *http.Request) httperror.Http
 	}
 
 	return renderPage(w, "remote", page)
+}
+
+// acctOf は取得済みの actor から @user@host 表記を組む。id の URL 構造は
+// 実装によって異なる（Misskey は id に内部 ID を使うなど）ため、URL を
+// パースせず preferredUsername を信頼する。
+func acctOf(actor *activitystream.Object) string {
+	if actor.PreferredUsername == "" {
+		return actor.ID
+	}
+	host := hostOf(actor.ID)
+	if host == "" {
+		return "@" + actor.PreferredUsername
+	}
+	return "@" + actor.PreferredUsername + "@" + host
 }
 
 // followStateOf は自分から見た actorURI へのフォロー状態を返す。

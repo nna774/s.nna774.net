@@ -13,8 +13,8 @@
   <div class="profile">
     {{if .IconURL}}<img src="{{.IconURL}}" alt="">{{end}}
     <div>
-      <h2>{{if .Name}}{{.Name}}{{else}}{{acct .ActorURI}}{{end}}</h2>
-      <div class="handle">{{acct .ActorURI}}</div>
+      <h2>{{if .Name}}{{.Name}}{{else}}{{.Acct}}{{end}}</h2>
+      <div class="handle">{{.Acct}}</div>
       {{with .Summary}}<div>{{sanitize .}}</div>{{end}}
       <div class="counts">
         投稿 <b>{{.StatusCount}}</b>
