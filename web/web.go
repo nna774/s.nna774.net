@@ -57,12 +57,17 @@ var funcs = template.FuncMap{
 	"acct":     acct,
 }
 
+// jst は表示用のタイムゾーン。Lambda 実行環境のプロセスタイムゾーンは
+// UTC 固定なので、time.Local() では JST にならない。1人用で利用者は
+// 日本在住のため、固定で JST に変換する。
+var jst = time.FixedZone("Asia/Tokyo", 9*60*60)
+
 // humanTime は ActivityStreams の published を読みやすくする。実装に
 // よって ISO8601 と RFC1123 のどちらも来るため両方受ける。
 func humanTime(s string) string {
 	for _, layout := range []string{time.RFC3339, time.RFC1123, time.RFC1123Z, time.RFC3339Nano} {
 		if t, err := time.Parse(layout, s); err == nil {
-			return t.Local().Format("2006-01-02 15:04")
+			return t.In(jst).Format("2006-01-02 15:04")
 		}
 	}
 	return s
