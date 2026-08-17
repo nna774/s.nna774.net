@@ -19,15 +19,16 @@ func nowRFC3339() string { return time.Now().UTC().Format(time.RFC3339) }
 func saveFollower(ctx context.Context, partition string, actor *activitystream.Object, activityID string, state string) error {
 	name, iconURL := actorDisplay(actor)
 	return client.PutKV(ctx, &datastore.KVItem{
-		PK:          partition,
-		SK:          actor.ID,
-		Inbox:       actor.Inbox,
-		SharedInbox: sharedInboxOf(actor),
-		Name:        name,
-		IconURL:     iconURL,
-		ActivityID:  activityID,
-		State:       state,
-		At:          nowRFC3339(),
+		PK:                partition,
+		SK:                actor.ID,
+		Inbox:             actor.Inbox,
+		SharedInbox:       sharedInboxOf(actor),
+		Name:              name,
+		IconURL:           iconURL,
+		PreferredUsername: actor.PreferredUsername,
+		ActivityID:        activityID,
+		State:             state,
+		At:                nowRFC3339(),
 	})
 }
 

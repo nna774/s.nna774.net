@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"html/template"
 	"io"
-	"regexp"
 	"time"
 
 	"github.com/microcosm-cc/bluemonday"
@@ -54,7 +53,6 @@ func Sanitize(html string) template.HTML {
 var funcs = template.FuncMap{
 	"sanitize": Sanitize,
 	"datetime": humanTime,
-	"acct":     acct,
 }
 
 // jst は表示用のタイムゾーン。Lambda 実行環境のプロセスタイムゾーンは
@@ -71,18 +69,6 @@ func humanTime(s string) string {
 		}
 	}
 	return s
-}
-
-var actorURIPattern = regexp.MustCompile(`^https?://([^/]+)/(?:users/|u/|@)?([^/]+)/?$`)
-
-// acct は actor の URI を @user@host 風の表記に直す。表示用の目安であり、
-// 厳密な解決ではない。
-func acct(uri string) string {
-	m := actorURIPattern.FindStringSubmatch(uri)
-	if m == nil {
-		return uri
-	}
-	return fmt.Sprintf("@%s@%s", m[2], m[1])
 }
 
 // Render は名前付きのページを描画する。

@@ -119,16 +119,17 @@ func cacheActorInfo(ctx context.Context, actor *config.ActorConfig, actorURI str
 		return
 	}
 	name, iconURL := actorDisplay(remote)
-	if name == "" && iconURL == "" {
+	if name == "" && iconURL == "" && remote.PreferredUsername == "" {
 		return
 	}
 	if err := client.PutKV(ctx, &datastore.KVItem{
-		PK:      datastore.KVActorInfo,
-		SK:      actorURI,
-		Name:    name,
-		IconURL: iconURL,
-		At:      nowRFC3339(),
-		TTL:     time.Now().Add(actorInfoTTL).Unix(),
+		PK:                datastore.KVActorInfo,
+		SK:                actorURI,
+		Name:              name,
+		IconURL:           iconURL,
+		PreferredUsername: remote.PreferredUsername,
+		At:                nowRFC3339(),
+		TTL:               time.Now().Add(actorInfoTTL).Unix(),
 	}); err != nil {
 		logf("caching the display name of %v failed: %v", actorURI, err)
 	}

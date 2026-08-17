@@ -89,6 +89,10 @@ type KVItem struct {
 	SharedInbox string `dynamo:"sharedInbox,omitempty"`
 	Name        string `dynamo:"name,omitempty"`
 	IconURL     string `dynamo:"iconURL,omitempty"`
+	// PreferredUsername は @user@host 表記の local-part。actor.id の URL
+	// 構造は実装依存 (Misskey は内部 ID を使うなど) で信用できないため、
+	// 表示用に actor 自身の申告する preferredUsername を別途持つ。
+	PreferredUsername string `dynamo:"preferredUsername,omitempty"`
 	// ActivityID は Undo を受けたときに突き合わせる元の Follow の id。
 	ActivityID string `dynamo:"activityID,omitempty"`
 	// State は following で使う。pending か accepted。
