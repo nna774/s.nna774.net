@@ -89,15 +89,16 @@ func likeRequestHandler(w http.ResponseWriter, r *http.Request) httperror.HttpEr
 	// 配信より先に記録する。逆順だと、配信された Like を取り消す手段が
 	// 無くなる。
 	if err := client.PutKV(ctx, &datastore.KVItem{
-		PK:          actorScoped(primary, datastore.KVMyLikes),
-		SK:          object,
-		ActivityID:  like.ID,
-		Inbox:       inbox,
-		TargetActor: actorURI,
-		Name:        name,
-		IconURL:     iconURL,
-		Content:     content,
-		At:          nowRFC3339(),
+		PK:                actorScoped(primary, datastore.KVMyLikes),
+		SK:                object,
+		ActivityID:        like.ID,
+		Inbox:             inbox,
+		TargetActor:       actorURI,
+		Name:              name,
+		IconURL:           iconURL,
+		PreferredUsername: actor.PreferredUsername,
+		Content:           content,
+		At:                nowRFC3339(),
 	}); err != nil {
 		return httperror.StatusInternalServerError("cannot record the like", err)
 	}

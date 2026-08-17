@@ -12,7 +12,7 @@
       <div class="who">
         {{if .IconURL}}<img src="{{.IconURL}}" alt="">{{end}}
         {{if .AuthorURI}}
-          <a class="name" href="/remote?actor={{.AuthorURI}}">{{if .AuthorName}}{{.AuthorName}}{{else}}{{acct .AuthorURI}}{{end}}</a>
+          <a class="name" href="/remote?actor={{.AuthorURI}}">{{if .AuthorName}}{{.AuthorName}}{{else}}{{.Acct}}{{end}}</a>
         {{end}}
       </div>
       {{if and $.Authed .Content}}

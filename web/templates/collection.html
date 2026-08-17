@@ -11,9 +11,9 @@
     <article>
       <div class="who">
         {{if .IconURL}}<img src="{{.IconURL}}" alt="">{{end}}
-        <a class="name" href="/remote?actor={{.ActorURI}}">{{if .Name}}{{.Name}}{{else}}{{acct .ActorURI}}{{end}}</a>
+        <a class="name" href="/remote?actor={{.ActorURI}}">{{if .Name}}{{.Name}}{{else}}{{.Acct}}{{end}}</a>
       </div>
-      <div class="meta">{{acct .ActorURI}}</div>
+      <div class="meta">{{.Acct}}</div>
     </article>
   {{end}}
 {{else}}

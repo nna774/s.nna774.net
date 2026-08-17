@@ -14,10 +14,10 @@
     {{if .IconURL}}<img src="{{.IconURL}}" alt="">{{end}}
     {{if .Mine}}
       <span class="name">{{.Name}}</span>
-      <span>{{acct .AuthorURI}}</span>
+      <span>{{.Acct}}</span>
     {{else}}
       <a class="name" href="/remote?actor={{.AuthorURI}}">{{.Name}}</a>
-      <a href="/remote?actor={{.AuthorURI}}">{{acct .AuthorURI}}</a>
+      <a href="/remote?actor={{.AuthorURI}}">{{.Acct}}</a>
     {{end}}
   </div>
   {{with .InReplyTo}}<div class="reply-to">返信: <a href="{{.}}">{{.}}</a></div>{{end}}

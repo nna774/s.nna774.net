@@ -54,6 +54,7 @@ type announcePage struct {
 	AnnounceURI string
 	Name        string
 	AuthorURI   string
+	Acct        string
 	IconURL     string
 	// Mine はブーストした投稿の著者が自分自身かどうか。自分の投稿を
 	// 自分でブーストした場合に、著者名をリンクにしないための出し分けに使う。
@@ -79,6 +80,7 @@ func htmlAnnounceHandler(w http.ResponseWriter, r *http.Request, primary *config
 		AnnounceURI: announce.ID,
 		Name:        authorName(ctx, authorURI),
 		AuthorURI:   authorURI,
+		Acct:        acctFor(ctx, authorURI),
 		IconURL:     cachedIconURL(ctx, authorURI),
 		Mine:        authorURI == primary.ID(),
 		Content:     note.Content,

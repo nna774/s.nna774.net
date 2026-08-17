@@ -446,6 +446,7 @@ func paginate[T any](items []T, skip, perPage int) ([]T, bool) {
 type collectionMember struct {
 	Name     string
 	ActorURI string
+	Acct     string
 	IconURL  string
 }
 
@@ -464,6 +465,7 @@ func htmlCollectionHandler(w http.ResponseWriter, r *http.Request, actor *config
 		members = append(members, collectionMember{
 			Name:     it.Name,
 			ActorURI: it.SK,
+			Acct:     acctFromItem(it, it.SK),
 			IconURL:  it.IconURL,
 		})
 	}
@@ -483,6 +485,7 @@ type favoriteItem struct {
 	ObjectURI  string
 	AuthorName string
 	AuthorURI  string
+	Acct       string
 	IconURL    string
 	Content    string
 	At         string
@@ -540,6 +543,7 @@ func favoritesHandler(w http.ResponseWriter, r *http.Request) httperror.HttpErro
 			ObjectURI:  it.SK,
 			AuthorName: it.Name,
 			AuthorURI:  it.TargetActor,
+			Acct:       acctFromItem(it, it.TargetActor),
 			IconURL:    it.IconURL,
 			Content:    it.Content,
 			At:         it.At,
@@ -609,6 +613,7 @@ func countReactors(ctx context.Context, pk, objectURI string) int {
 type reactorItem struct {
 	Name     string
 	ActorURI string
+	Acct     string
 	IconURL  string
 	// AnnounceURI は Announce 自身の URI。/status/:id/announces でのみ
 	// 使う。分かっている場合だけ元のブーストへリンクする。
@@ -671,6 +676,7 @@ func statusReactorsHandler(w http.ResponseWriter, r *http.Request, pk, templateN
 		item := reactorItem{
 			Name:     authorName(ctx, actorURI),
 			ActorURI: actorURI,
+			Acct:     acctFor(ctx, actorURI),
 			IconURL:  cachedIconURL(ctx, actorURI),
 			At:       it.At,
 		}
@@ -761,6 +767,7 @@ func attachmentKind(mediaType string) string {
 type timelineItem struct {
 	AuthorName  string
 	AuthorURI   string
+	Acct        string
 	IconURL     string
 	Content     string
 	Attachments []attachmentItem
@@ -901,6 +908,7 @@ func timelineHandler(w http.ResponseWriter, r *http.Request) httperror.HttpError
 	knownActors := map[string]*datastore.KVItem{}
 	for i := range items {
 		items[i].AuthorName, items[i].IconURL = actorDisplayCached(ctx, knownActors, items[i].AuthorURI)
+		items[i].Acct = acctCached(ctx, knownActors, items[i].AuthorURI)
 		if items[i].BoostedByURI != "" {
 			items[i].BoostedByName, _ = actorDisplayCached(ctx, knownActors, items[i].BoostedByURI)
 		}
@@ -999,6 +1007,44 @@ func lookupKnownActor(ctx context.Context, actorURI string) *datastore.KVItem {
 	return nil
 }
 
+// acctFor / acctCached は authorName / actorDisplayCached と対になる、
+// キャッシュ済みの preferredUsername から @user@host を組む版。actor.id の
+// URL 構造は実装依存 (Misskey は内部 ID を使うなど) で信用できないため、
+// URL を正規表現でこじ開けるのではなく、actor 自身が申告した
+// preferredUsername を使う。キャッシュに無ければ authorName の未解決時と
+// 同じく actorURI をそのまま返す。
+func acctFor(ctx context.Context, actorURI string) string {
+	primary := Config.PrimaryActor()
+	if actorURI == primary.ID() {
+		return "@" + primary.Username
+	}
+	return acctFromItem(lookupKnownActor(ctx, actorURI), actorURI)
+}
+
+func acctCached(ctx context.Context, cache map[string]*datastore.KVItem, actorURI string) string {
+	primary := Config.PrimaryActor()
+	if actorURI == primary.ID() {
+		return "@" + primary.Username
+	}
+	it, ok := cache[actorURI]
+	if !ok {
+		it = lookupKnownActor(ctx, actorURI)
+		cache[actorURI] = it
+	}
+	return acctFromItem(it, actorURI)
+}
+
+func acctFromItem(it *datastore.KVItem, actorURI string) string {
+	if it == nil || it.PreferredUsername == "" {
+		return actorURI
+	}
+	host := hostOf(actorURI)
+	if host == "" {
+		return "@" + it.PreferredUsername
+	}
+	return "@" + it.PreferredUsername + "@" + host
+}
+
 // --- 通知 -------------------------------------------------------------
 
 // 通知の種別。テンプレートで文面を分けるために使う。
@@ -1017,6 +1063,7 @@ type notificationItem struct {
 	Kind      string
 	ActorName string
 	ActorURI  string
+	Acct      string
 	IconURL   string
 	// TargetURI は Like / Announce の対象になった自分の投稿、または
 	// 返信先の投稿。
@@ -1115,6 +1162,7 @@ func toNotificationItem(ctx context.Context, act *activitystream.Object, excerpt
 		Published: act.Published,
 	}
 	item.ActorName = authorName(ctx, item.ActorURI)
+	item.Acct = acctFor(ctx, item.ActorURI)
 	item.IconURL = cachedIconURL(ctx, item.ActorURI)
 
 	primary := Config.PrimaryActor()
