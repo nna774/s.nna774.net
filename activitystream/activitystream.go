@@ -212,6 +212,64 @@ type Object struct {
 	Recipient string `json:"recipient,omitempty"`
 }
 
+// UnmarshalJSON は url を単一文字列・Link オブジェクト・それらの配列の
+// いずれで来ても受ける。Bridgy Fed の web サイト actor 等は url を配列で
+// 返す。表示に使うのは1つで足りるため先頭の非空値だけを拾う。
+func (o *Object) UnmarshalJSON(b []byte) error {
+	type objectAlias Object
+	aux := struct {
+		URL json.RawMessage `json:"url,omitempty"`
+		*objectAlias
+	}{objectAlias: (*objectAlias)(o)}
+	if err := json.Unmarshal(b, &aux); err != nil {
+		return err
+	}
+	u, err := decodeObjectURL(aux.URL)
+	if err != nil {
+		return fmt.Errorf("decoding url failed: %w", err)
+	}
+	o.URL = u
+	return nil
+}
+
+func decodeObjectURL(raw json.RawMessage) (string, error) {
+	raw = bytes.TrimSpace(raw)
+	if len(raw) == 0 || bytes.Equal(raw, []byte("null")) {
+		return "", nil
+	}
+	if raw[0] == '[' {
+		var items []json.RawMessage
+		if err := json.Unmarshal(raw, &items); err != nil {
+			return "", err
+		}
+		for _, item := range items {
+			s, err := decodeObjectURL(item)
+			if err != nil {
+				return "", err
+			}
+			if s != "" {
+				return s, nil
+			}
+		}
+		return "", nil
+	}
+	if raw[0] == '"' {
+		var s string
+		if err := json.Unmarshal(raw, &s); err != nil {
+			return "", err
+		}
+		return s, nil
+	}
+	// Link オブジェクト形式: {"type":"Link","href":"..."}
+	var link struct {
+		Href string `json:"href"`
+	}
+	if err := json.Unmarshal(raw, &link); err != nil {
+		return "", err
+	}
+	return link.Href, nil
+}
+
 type Endpoints struct {
 	SharedInbox string `json:"sharedInbox,omitempty"`
 }

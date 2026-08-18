@@ -366,6 +366,33 @@ func TestObjectsAcceptsSingleValueAndArray(t *testing.T) {
 	}
 }
 
+func TestObjectURLAcceptsStringArrayAndLink(t *testing.T) {
+	for _, tt := range []struct {
+		name string
+		in   string
+		want string
+	}{
+		{"single string", `{"url":"https://example.com/a"}`, "https://example.com/a"},
+		// Bridgy Fed の web サイト actor が実際に返す形。
+		{"array of strings", `{"url":["https://example.com/a","https://example.com/b"]}`, "https://example.com/a"},
+		{"array with leading empty", `{"url":["","https://example.com/b"]}`, "https://example.com/b"},
+		{"link object", `{"url":{"type":"Link","href":"https://example.com/a"}}`, "https://example.com/a"},
+		{"array of link objects", `{"url":[{"type":"Link","href":"https://example.com/a"}]}`, "https://example.com/a"},
+		{"null", `{"url":null}`, ""},
+		{"absent", `{}`, ""},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			o := &Object{}
+			if err := json.Unmarshal([]byte(tt.in), o); err != nil {
+				t.Fatalf("Unmarshal: %v", err)
+			}
+			if o.URL != tt.want {
+				t.Errorf("URL = %q, want %q", o.URL, tt.want)
+			}
+		})
+	}
+}
+
 func TestRefRoundTrip(t *testing.T) {
 	t.Run("URI stays a string", func(t *testing.T) {
 		b, err := json.Marshal(&Object{Object: URIRef("https://example.com/1")})
