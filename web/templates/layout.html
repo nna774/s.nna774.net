@@ -105,6 +105,29 @@ document.addEventListener('keydown', function (e) {
   el.form.requestSubmit();
 });
 
+// 投稿フォームの textarea に画像をペーストしたら、隣の file input に
+// 貼り付ける。DataTransfer 経由でしか input[type=file].files は書き
+// 換えられないため、この形になる。
+document.addEventListener('paste', function (e) {
+  var el = e.target;
+  if (!(el instanceof HTMLTextAreaElement) || !el.form) return;
+  var fileInput = el.form.querySelector('input[type=file]');
+  if (!fileInput) return;
+  var items = (e.clipboardData || window.clipboardData || {}).items;
+  if (!items) return;
+  for (var i = 0; i < items.length; i++) {
+    var item = items[i];
+    if (item.kind !== 'file' || item.type.indexOf('image/') !== 0) continue;
+    var file = item.getAsFile();
+    if (!file) continue;
+    var dt = new DataTransfer();
+    dt.items.add(file);
+    fileInput.files = dt.files;
+    e.preventDefault();
+    break;
+  }
+});
+
 function deleteStatus(e, statusId, localPart) {
   e.preventDefault();
   if (!confirm('この投稿を削除する。よいか')) return;
