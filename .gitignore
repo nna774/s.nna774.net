@@ -4,6 +4,9 @@
 
 /*.key
 
+# direnv（ローカルのAWS_PROFILE切り替え等、マシン依存の設定）
+.envrc
+
 # .claude/ は共有したいものだけ通す
 /.claude/*
 !/.claude/settings.json
