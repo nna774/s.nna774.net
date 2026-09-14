@@ -12,6 +12,7 @@
 - [Deployment](deployment.md) - デプロイ手順
 - [Design Decisions](design-decisions.md) - 設計上の判断と理由
 - [Bot Account Design](bot-account-design.md) - 複数アクター（bot account）対応の設計（未実装）
+- [Known Issues](known-issues.md) - 対応方針を保留している既知の課題
 
 ## クイックスタート
 
